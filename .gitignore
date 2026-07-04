@@ -1,0 +1,22 @@
+#設定檔
+.env
+*.toml
+*.yaml
+config.py
+.venv/
+.vscode/
+.tmp.drivedownload/
+.tmp.driveupload/
+assets/
+
+#編譯產物
+*.pyc
+__pycache__/
+
+#數據庫: 保留結構, 忽略數據內容
+db/*
+!db/.gitkeep
+
+#測試檔案
+test/
+utils_test.py
