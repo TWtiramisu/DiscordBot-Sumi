@@ -18,8 +18,7 @@ class main(commands.Cog):
 
     @commands.command()
     async def help(self, ctx:commands.Context, category=None):
-        try: await ctx.reply(view=contentsView(ctx.author, category))
-        except Exception as e: print(e)
+        await ctx.reply(view=contentsView(ctx.author, category))
 
     #異步函數跟註冊器綁一起的不要動 -> 用autocomplete動態註冊Choice選單
     async def helpOptions_autocomplete(self, interaction:discord.Interaction, current:str):

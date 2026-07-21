@@ -48,8 +48,7 @@ class use(commands.Cog):
     async def info(self, ctx:commands.Context, member:discord.Member=None):
         member = member or ctx.author
 
-        try: await ctx.reply(view=infosView(member))
-        except Exception as e: print(e)
+        await ctx.reply(view=infosView(member))
 
     @commands.command(name="luck", description="今日運勢(僅供參考)")
     async def luck(self, ctx:commands.Context):

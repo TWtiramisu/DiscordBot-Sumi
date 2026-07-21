@@ -24,7 +24,7 @@ class MyBot(commands.Bot):
         print(f"Cog have been loaded.")
 
     async def on_ready(self):
-        print(f"bot {self.user.name} joined at {datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")}!")
+        print(f"bot {self.user.name} joined at {datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')}!")
         activity = discord.CustomActivity(name="正在烤蛋糕")
         await self.change_presence(status=discord.Status.idle, activity=activity)
 bot = MyBot()
@@ -49,7 +49,7 @@ async def sync(ctx:commands.Context, mode="guild"):
         elif mode == "global": #全域同步
             synced = await bot.tree.sync()
 
-        print(f"[{now} ◈ {mode} mode] Synced: {", ".join([content.name for content in synced])}")
+        print(f"[{now} ◈ {mode} mode] Synced: {', '.join([content.name for content in synced])}")
 
     except Exception as e:
         print(e)

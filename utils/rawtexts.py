@@ -3,23 +3,23 @@ from discord.ui import LayoutView, Container, ActionRow, Separator, TextDisplay,
 
 import aiosqlite
 from typing import Literal
-from config import DIV, SQL
+from config import DIV, RAWTEXT_SQL
 
 async def rawtext_select(target_key:str, filter_key:str, filter_value):
-    async with aiosqlite.connect(SQL) as db:
+    async with aiosqlite.connect(RAWTEXT_SQL) as db:
         query = f"SELECT {target_key} FROM rawtext WHERE {filter_key} = ?"
         async with db.execute(query, (filter_value,)) as cursor:
             result = await cursor.fetchone()
             return result
         
 async def rawtext_insert(target_key:str, value:tuple):
-    async with aiosqlite.connect(SQL) as db:
+    async with aiosqlite.connect(RAWTEXT_SQL) as db:
         sql = f"INSERT INTO rawtext ({target_key}) VALUES ({('?, '*len(value))[0:-2]})"
         await db.execute(sql, value)
         await db.commit()
 
 async def rawtext_update(target_key:str, new_value, filter_key: str, filter_value):
-    async with aiosqlite.connect(SQL) as db:
+    async with aiosqlite.connect(RAWTEXT_SQL) as db:
         sql = f"UPDATE rawtext SET {target_key} = ? WHERE {filter_key} = ?"
         await db.execute(sql, (new_value, filter_value))
         await db.commit()
