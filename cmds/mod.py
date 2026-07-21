@@ -11,8 +11,8 @@ class mod(commands.Cog):
         self.bot = bot
         self.title = "管理指令"
         self.description = "僅限管理員使用功能"
-        self.emoji = "🟥"
-        self.color = discord.Color.red()
+        self.emoji = "🔰"
+        self.color = discord.Color.teal()
 
         GLOBAL_COGS["mod"] = self
 

@@ -39,7 +39,7 @@ def get_categoryDescriptions(category=None):
     description = []
 
     if category is None:
-        title = "目錄"
+        title = "📚 目錄"
         color = discord.Color.blue()
 
         for cog_category, cog_object in GLOBAL_COGS.items():

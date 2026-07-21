@@ -152,7 +152,7 @@ class MusicBot(commands.Cog):
         else:
             await ctx.reply("❌ 我目前不在任何語音頻道中。")
 
-    @commands.command(name="play", usage="<url: YT/Bilibili>", description="添加播放佇列")
+    @commands.command(name="play", usage="<url: YouTube/Bilibili>", description="添加播放佇列")
     async def play(self, ctx:commands.Context, *, url):
         guild_id = ctx.guild.id
 

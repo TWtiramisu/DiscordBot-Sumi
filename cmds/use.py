@@ -13,8 +13,8 @@ class use(commands.Cog):
         self.bot = bot
         self.title = "功能選單"
         self.description = "一般日常實用指令"
-        self.emoji = "🟨"
-        self.color = discord.Color.gold()
+        self.emoji = "🏷️"
+        self.color = discord.Color.yellow()
 
         GLOBAL_COGS["use"] = self
 
