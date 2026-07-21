@@ -52,7 +52,7 @@ def get_categoryDescriptions(category=None):
 
         for cog_category, cog_object in GLOBAL_COGS.items():
             if category.lower() == cog_category:
-                title = getattr(cog_object, "title", cog_category)
+                title = f"{getattr(cog_object, 'emoji', ' ')} {getattr(cog_object, 'title', cog_category)}"
                 color = getattr(cog_object, "color", discord.Color.light_gray())
                 target_cog = cog_object
                 break
