@@ -1,10 +1,15 @@
 import discord
 from discord.ext import commands
 
-import random
+import random, importlib
 from config import GLOBAL_COGS
-from utils.rawtexts import rawtextsView, editWhichRaw, rawtext_select, rawtext_insert 
+
+# utils hot reload
+import utils.uses, utils.rawtexts
+importlib.reload(utils.uses)
+importlib.reload(utils.rawtexts)
 from utils.uses import infosView
+from utils.rawtexts import rawtextsView, editWhichRaw, rawtext_select, rawtext_insert 
 
 
 

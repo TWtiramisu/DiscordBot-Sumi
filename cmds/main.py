@@ -2,8 +2,12 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-import datetime
+import datetime, importlib
 from typing import Optional
+
+# utils hot reload
+import utils.helps
+importlib.reload(utils.helps)
 from utils.helps import contentsView, get_helpOptions
 
 
