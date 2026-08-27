@@ -23,8 +23,7 @@ FFMPEG_OPTIONS = {
         '-headers "Referer: https://www.bilibili.com/\r\n'
         'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/115.0.0.0 Safari/537.36\r\n"'
     ),
-    # -ar 48000 (固定 48kHz, 解決加速問題), -ac 2 (雙聲道)
-    'options': '-vn -ar 48000 -ac 2'
+    'options': '-vn'
 }
 
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
