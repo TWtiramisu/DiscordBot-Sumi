@@ -8,6 +8,7 @@ config.py
 .tmp.drivedownload/
 .tmp.driveupload/
 assets/
+.DS_Store
 
 #編譯產物
 *.pyc

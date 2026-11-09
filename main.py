@@ -3,6 +3,7 @@ from discord.ext import commands
 
 import os, asyncio, datetime
 from config import Info, BOT_PREFIX
+from dotenv import load_dotenv
 
 #建立一個繼承Bot的類別
 class MyBot(commands.Bot):
@@ -31,6 +32,7 @@ bot = MyBot()
 
 async def main():
     try:
+        load_dotenv()
         await bot.start(os.getenv("TOKEN"))
     except asyncio.CancelledError:
         print("[-] 機器人連線被取消。")

@@ -16,7 +16,7 @@ class MusicBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.title = "音樂功能"
-        self.description = "播放音樂! 支援YT與Bilibili"
+        self.description = "播放音樂！支援YT與Bilibili"
         self.emoji = "🎵"
         self.color = discord.Color.blue()
 
