@@ -93,10 +93,6 @@ class GroqAICog(commands.Cog):
         if message.author.bot:
             return
 
-        # 僅在特定頻道中觸發
-        if message.channel.id != self.target_channel_id:
-            return
-
         # 忽略指令訊息（例如以前綴開頭的訊息）
         prefix = self.bot.command_prefix
         if isinstance(prefix, str) and message.content.startswith(prefix):
@@ -110,9 +106,49 @@ class GroqAICog(commands.Cog):
         if ctx.valid:
             return
 
-        prompt = message.content.strip()
-        if not prompt:
+        # 觸發條件判斷：
+        # 位於指定的專屬頻道
+        is_in_target_channel = (message.channel.id == self.target_channel_id)
+        # 機器人被 @tag (mention)
+        is_mentioned = (self.bot.user in message.mentions)
+
+        # 訊息為回覆 (reply) 機器人
+        is_reply_to_bot = False
+        ref_msg = None
+        if message.reference and message.reference.message_id:
+            if isinstance(message.reference.resolved, discord.Message):
+                ref_msg = message.reference.resolved
+
+            elif message.reference.cached_message:
+                ref_msg = message.reference.cached_message
+
+            else:
+                try:
+                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                    
+                except Exception:
+                    ref_msg = None
+
+            if ref_msg and ref_msg.author.id == self.bot.user.id:
+                is_reply_to_bot = True
+
+        # 若三種觸發條件皆不符合，則不處理
+        if not (is_in_target_channel or is_mentioned or is_reply_to_bot):
             return
+
+        prompt = message.content
+        # 若是被 tag，移除訊息中的 @機器人 標籤以保持語意乾淨
+        if is_mentioned:
+            prompt = prompt.replace(f"<@{self.bot.user.id}>", "").replace(f"<@!{self.bot.user.id}>", "")
+
+        prompt = prompt.strip()
+        if not prompt:
+            # 若使用者僅 tag 或回覆機器人但未輸入其他文字，給予預設問候
+            if is_mentioned or is_reply_to_bot:
+                prompt = "你好"
+
+            else:
+                return
 
         async with message.channel.typing():
             try:
@@ -122,11 +158,23 @@ class GroqAICog(commands.Cog):
                 if channel_id not in self.chat_history:
                     self.chat_history[channel_id] = []
 
-                # 將使用者的最新發言寫入記憶（包含發言者名稱與 ID）
-                user_content = f"[{message.author.display_name} | ID: {message.author.id}]: {prompt}"
+                # 若是回覆機器人的發言，且該則發言不在記憶中，自動補齊為上下文
+                if is_reply_to_bot and ref_msg and ref_msg.content:
+                    if not any(m.get("content") == ref_msg.content for m in self.chat_history[channel_id]):
+                        self.chat_history[channel_id].append({"role": "assistant", "content": ref_msg.content})
+
+                # 將使用者的最新發言寫入記憶（包含發言者名稱與 ID；若使用 Reply 則明確標註被回覆的對象與內容）
+                if ref_msg and ref_msg.content:
+                    target_name = "你" if ref_msg.author.id == self.bot.user.id else ref_msg.author.display_name
+                    # 避免被回覆的內容過長，截取前 150 字作為引用標註
+                    ref_snippet = ref_msg.content[:150] + ("..." if len(ref_msg.content) > 150 else "")
+                    user_content = f"[{message.author.display_name} | ID: {message.author.id}] (回覆了 {target_name} 的訊息「{ref_snippet}」): {prompt}"
+                else:
+                    user_content = f"[{message.author.display_name} | ID: {message.author.id}]: {prompt}"
+
                 self.chat_history[channel_id].append({"role": "user", "content": user_content})
 
-                # 限制對話歷史長度（保留最新 10 則）
+                # 限制對話歷史長度
                 if len(self.chat_history[channel_id]) > 10:
                     self.chat_history[channel_id] = self.chat_history[channel_id][-10:]
 
@@ -205,6 +253,7 @@ class GroqAICog(commands.Cog):
                 await message.channel.send(f"[x] 呼叫 Groq API 時發生錯誤：```{str(e)}```")
 
     @commands.command(name="cclear")
+    @commands.is_owner()
     async def content_clear(self, ctx: commands.Context):
         channel_id = ctx.channel.id
         if channel_id in self.chat_history:
