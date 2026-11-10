@@ -74,11 +74,11 @@ class main(commands.Cog):
         
         try:
             await self.bot.reload_extension(target)
-            await ctx.reply(f"[✔] 成功重新載入 Cog: `{target}`")
+            await ctx.reply(f"[v] 成功重新載入 Cog: `{target}`")
             print(f"[{datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')}] Reloaded: {target}")
 
         except commands.ExtensionNotFound:
-            await ctx.reply(f"[X] 找不到該 Cog: `{target}`")
+            await ctx.reply(f"[x] 找不到該 Cog: `{target}`")
             print(f"[{datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')}] Cog not found: {target}")
 
         except Exception as e:
@@ -92,7 +92,7 @@ class main(commands.Cog):
 
         try:
             await self.bot.load_extension(target)
-            await ctx.reply(f"[✔] 成功載入 Cog：`{target}`")
+            await ctx.reply(f"[v] 成功載入 Cog：`{target}`")
 
         except Exception as e:
             await ctx.reply(f"[!] 載入 `{target}` 失敗：\n```py\n{e}\n```")
@@ -105,7 +105,7 @@ class main(commands.Cog):
 
         try:
             await self.bot.unload_extension(target)
-            await ctx.reply(f"[✔] 成功卸載 Cog：`{target}`")
+            await ctx.reply(f"[v] 成功卸載 Cog：`{target}`")
 
         except Exception as e:
             await ctx.reply(f"[!] 卸載 `{target}` 失敗：\n```py\n{e}\n```")
