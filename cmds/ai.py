@@ -1,20 +1,86 @@
 import discord
 from discord.ext import commands
 
-import os, json, inspect, asyncio, importlib
+import os, json, inspect, asyncio, importlib, typing
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from config import GLOBAL_COGS
 
 # utils hot reload
 import utils.memory
 importlib.reload(utils.memory)
-from utils.memory import MemoryManager
+from utils.memory import MemoryManager, MemorySelectView
 
+# 可用模型清單 { model_id: daily token limit }
+MODEL_LIST: dict[str, int] = {
+    "qwen/qwen3.8-27b": 200_000,
+    "openai/gpt-oss-120b": 200_000,
+    "openai/gpt-oss-20b": 200_000,
+
+}
+
+class ModelSelectView(discord.ui.View):
+    """開發者專屬：切換 AI 模型的 Select Menu"""
+
+    def __init__(self, cog: "GroqAICog", today_usage: dict[str, int]):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.message: discord.Message | None = None
+
+        options = []
+        for m, limit in MODEL_LIST.items():
+            used = today_usage.get(m, 0)
+            desc = f"今日: {used:,} / {limit:,} tokens"
+            options.append(
+                discord.SelectOption(
+                    label=m,
+                    description=desc,
+                    value=m,
+                    default=(m == cog.model_name)
+                )
+            )
+        self.select = discord.ui.Select(
+            placeholder="選擇要使用的模型...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        chosen_id = self.select.values[0]
+        self.cog.model_name = chosen_id
+        self.stop()
+        await interaction.response.edit_message(
+            content = f"[v] 已切換模型為 `{chosen_id}`",
+            view = None
+        )
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="[x] 模型選擇逾時，已取消。", view=None)
+                
+            except Exception:
+                pass
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.cog.bot.owner_id:
+            await interaction.response.send_message("[x] 只有開發者才能切換模型喔！", ephemeral=True)
+            return False
+        return True
 
 
 class GroqAICog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.title = "AI Chat"
+        self.description = "與 苏米Sumi 聊天"
+        self.emoji = "✨"
+        self.color = discord.Color.gold()
+
+        GLOBAL_COGS["ai"] = self
 
         load_dotenv()
         self.ai_client = AsyncOpenAI(
@@ -25,7 +91,8 @@ class GroqAICog(commands.Cog):
         self.model_name = "qwen/qwen3.8-27b"
         
         # database files
-        self.memory_file = "db/chat_memory.json"
+        self.memory_file      = "db/chat_memory.json"
+        self.token_usage_file = "db/token_usage.json"
         self.ensure_db_files()
 
         # vector memory manager
@@ -42,16 +109,19 @@ class GroqAICog(commands.Cog):
         await self.memory_manager.init_db()
 
     def ensure_db_files(self):
-        """檢查 db/ 是否有 chat_memory.json，若無則創建"""
+        """檢查 db/ 是否有必要的 JSON 檔案，若無則創建"""
         os.makedirs("db", exist_ok=True)
-        if not os.path.exists(self.memory_file):
-            try:
-                with open(self.memory_file, "w", encoding="utf-8") as f:
-                    json.dump({}, f, ensure_ascii=False, indent=4)
-                print(f"[+] 已自動建立資料庫檔案: {self.memory_file}")
-                
-            except Exception as e:
-                print(f"[!] 建立 {self.memory_file} 失敗: {e}")
+        for path, default in [
+            (self.memory_file,      {}),
+            (self.token_usage_file, {}),
+        ]:
+            if not os.path.exists(path):
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(default, f, ensure_ascii=False, indent=4)
+                    print(f"[+] 已自動建立資料庫檔案: {path}")
+                except Exception as e:
+                    print(f"[!] 建立 {path} 失敗: {e}")
 
     def load_memory(self) -> dict:
         """從 JSON 檔案載入對話歷史紀錄"""
@@ -82,6 +152,39 @@ class GroqAICog(commands.Cog):
     def cog_unload(self):
         """當 Cog 被 !reload 或卸載時觸發，自動存檔"""
         self.save_memory()
+
+    # ── Token 用量追蹤 ────────────────────────────────────────────────
+
+    def _load_token_usage(self) -> dict:
+        """載入 token_usage.json（結構：{ "YYYY-MM-DD": { model_id: tokens } }）"""
+        try:
+            with open(self.token_usage_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_token_usage(self, data: dict):
+        """將用量資料寫回 token_usage.json"""
+        try:
+            with open(self.token_usage_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"[!] 儲存 token_usage 失敗: {e}")
+
+    def add_token_usage(self, model: str, tokens: int):
+        """將本次 API 呼叫的 token 數累加進今日紀錄"""
+        from datetime import date
+        today = date.today().isoformat()
+        data  = self._load_token_usage()
+        data.setdefault(today, {})
+        data[today][model] = data[today].get(model, 0) + tokens
+        self._save_token_usage(data)
+
+    def get_today_usage(self) -> dict[str, int]:
+        """取得今日各模型的 token 使用量 { model_id: tokens }"""
+        from datetime import date
+        today = date.today().isoformat()
+        return self._load_token_usage().get(today, {})
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -227,6 +330,10 @@ class GroqAICog(commands.Cog):
                 
                 reply = response.choices[0].message.content
 
+                # 累加本次 token 用量
+                if response.usage:
+                    self.add_token_usage(self.model_name, response.usage.total_tokens)
+
                 # 將 AI 的回答寫入對話歷史並即時存檔
                 self.chat_history[channel_id].append({"role": "assistant", "content": reply})
                 self.save_memory()
@@ -266,38 +373,109 @@ class GroqAICog(commands.Cog):
             except Exception as e:
                 await message.channel.send(f"[x] 呼叫 Groq API 時發生錯誤：```{str(e)}```")
 
-    @commands.command(name="cclear")
-    @commands.is_owner()
+    @commands.command(name="clearcontent", description="清理頻道上下文", aliases=["clearc", "cctx"])
     async def content_clear(self, ctx: commands.Context):
         channel_id = ctx.channel.id
+
         if channel_id in self.chat_history:
             del self.chat_history[channel_id]
             self.save_memory()
             await ctx.reply("[v] Sumi 已經忘記本頻道的上下文囉！")
+
         else:
             await ctx.reply("[x] 本頻道目前沒有任何對話記憶喔。")
 
-    @commands.command(name="memory")
-    async def show_memories(self, ctx: commands.Context):
-        """查看 Sumi 記住的個人長期事實"""
-        user_id = str(ctx.author.id)
+    @commands.command(name="memory", description="查看苏米Sumi對你的記憶", aliases=["mem"])
+    async def show_memories(self, ctx: commands.Context, target: typing.Optional[discord.User | discord.Member] = None):
+        """查看 Sumi 記住的個人長期事實（開發者可 tag 他人查看）"""
+        if target is not None and target.id != ctx.author.id:
+            if ctx.author.id != self.bot.owner_id:
+                await ctx.reply("[x] 只有開發者才能查看其他成員的記憶喔！")
+                return
+            
+            target_user = target
+            target_title = f"**{target.display_name}**"
+
+        else:
+            target_user = ctx.author
+            target_title = "你"
+
+        user_id = str(target_user.id)
         memories = await self.memory_manager.get_user_memories(user_id)
+
         if not memories:
-            await ctx.reply("Sumi 目前還沒有記住關於你的特定生活細節喔！多跟我聊聊吧～")
+            msg = "Sumi 目前還沒有記住關於你的特定生活細節喔！多跟我聊聊吧～" if target_user == ctx.author else f"Sumi 目前沒有關於 **{target_user.display_name}** 的特定生活細節喔！"
+            await ctx.reply(msg)
             return
-        
+
         lines = [f"{i+1}. {m['fact']} (記於 {m['created_at'][:10]})" for i, m in enumerate(memories)]
         content = "\n".join(lines)
+
         if len(content) > 1800:
             content = content[:1800] + "\n..."
-        await ctx.reply(f"**Sumi 關於你的長期記憶（共 {len(memories)} 條）**：\n```\n{content}\n```")
+            
+        await ctx.reply(f"**Sumi 關於 {target_title} 的長期記憶（共 {len(memories)} 條）**：\n```\n{content}\n```")
 
-    @commands.command(name="clearmemory")
-    async def clear_user_memory(self, ctx: commands.Context):
-        """清空自己的向量記憶"""
-        user_id = str(ctx.author.id)
-        count = await self.memory_manager.clear_user_memories(user_id)
-        await ctx.reply(f"[v] Sumi 已經清除關於你的 {count} 條長期向量記憶囉！")
+    @commands.command(name="clearmemory", description="刪除苏米Sumi對你的記憶(選單)", aliases=["cmem"])
+    async def clear_user_memory(
+        self,
+        ctx: commands.Context,
+        target: typing.Optional[discord.User | discord.Member] = None,
+        mode: str = None
+    ):
+        """管理/清除長期記憶（使用者可選單自選刪除，開發者可 tag 他人清除）"""
+        if target is not None and target.id != ctx.author.id:
+            if ctx.author.id != self.bot.owner_id:
+                await ctx.reply("[x] 只有開發者才能管理其他成員的記憶喔！")
+                return
+            target_user = target
+            is_other = True
+        else:
+            target_user = ctx.author
+            is_other = False
+
+        user_id = str(target_user.id)
+        target_name = target_user.display_name
+
+        # 若附加了 all 參數（例如 \clearmemory all 或 \clearmemory @User all），直接清空全部
+        if mode == "all":
+            count = await self.memory_manager.clear_user_memories(user_id)
+            target_text = f"**{target_name}** 的" if is_other else "關於你的"
+            await ctx.reply(f"[v] Sumi 已經清除{target_text} {count} 條長期記憶囉！")
+            return
+
+        memories = await self.memory_manager.get_user_memories(user_id)
+        if not memories:
+            target_text = f"關於 **{target_name}** 的" if is_other else "關於你的"
+            await ctx.reply(f"[i] Sumi 目前還沒有{target_text}長期記憶喔！")
+            return
+
+        # 透過 Select Menu 進行互動選擇
+        view = MemorySelectView(
+            memory_manager = self.memory_manager,
+            author_id = ctx.author.id,
+            target_user = target_user,
+            memories = memories
+        )
+        hint_title = f"**{target_name}** 的記憶" if is_other else "你的記憶"
+        msg = await ctx.reply(
+            f"[!] 請從下方選單選擇要刪除的 {hint_title}（可複選，或是按鈕全部清空）：",
+            view = view
+        )
+        view.message = msg
+
+    @commands.command(name="models", description="(限開發者)透過選單切換 AI 模型")
+    @commands.is_owner()
+    async def switch_model(self, ctx: commands.Context):
+        """開發者專屬：透過 Select Menu 切換目前使用的 AI 模型"""
+        today_usage = self.get_today_usage()
+        view = ModelSelectView(cog=self, today_usage=today_usage)
+        msg = await ctx.reply(
+            f"目前使用模型：`{self.model_name}`\n請從下方選單選擇要切換的模型：",
+            view = view
+        )
+        view.message = msg
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GroqAICog(bot))

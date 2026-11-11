@@ -1,7 +1,84 @@
+import discord
 import os, asyncio
 import numpy as np
 import aiosqlite
 from fastembed import TextEmbedding
+
+
+
+class MemorySelectView(discord.ui.View):
+    def __init__(self, memory_manager: MemoryManager, author_id: int, target_user: discord.User | discord.Member, memories: list[dict], timeout: float = 60.0):
+        super().__init__(timeout=timeout)
+        self.memory_manager = memory_manager
+        self.author_id = author_id
+        self.target_user = target_user
+        self.memories = memories
+        self.message: discord.Message | None = None
+
+        # 最多支援 25 個選項（Discord 限制）
+        display_memories = memories[:25]
+        options = []
+        for m in display_memories:
+            fact_label = m["fact"][:95] + ("..." if len(m["fact"]) > 95 else "")
+            date_str = m["created_at"][:10] if m.get("created_at") else ""
+            desc = f"ID: {m['id']}" + (f" | 記於 {date_str}" if date_str else "")
+            options.append(
+                discord.SelectOption(
+                    label = fact_label,
+                    description = desc[:100],
+                    value = str(m["id"])
+                )
+            )
+
+        self.select_menu = discord.ui.Select(
+            placeholder = "請選擇要刪除的記憶（可複選）",
+            min_values = 1,
+            max_values = len(options),
+            options = options,
+            row = 0
+        )
+        self.select_menu.callback = self.select_callback
+        self.add_item(self.select_menu)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("[x] 這不是你的記憶選單，無法操作喔！", ephemeral=True)
+            return False
+        return True
+
+    async def select_callback(self, interaction: discord.Interaction):
+        selected_ids = [int(v) for v in self.select_menu.values]
+        deleted_count = await self.memory_manager.delete_memories_by_ids(str(self.target_user.id), selected_ids)
+        target_name = self.target_user.display_name
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"[v] 成功刪除 **{target_name}** 的 {deleted_count} 條指定記憶！",
+            view=None
+        )
+
+    @discord.ui.button(label="清空全部記憶", style=discord.ButtonStyle.danger, emoji="💥", row=1)
+    async def clear_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        count = await self.memory_manager.clear_user_memories(str(self.target_user.id))
+        target_name = self.target_user.display_name
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"[v] 成功清空 **{target_name}** 的所有長期記憶（共 {count} 條）！",
+            view=None
+        )
+
+    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, row=1)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(content="[!] 已取消記憶管理操作。", view=None)
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(view=None)
+            except discord.HTTPException:
+                pass
+
+
 
 class MemoryManager:
     def __init__(self, db_path: str = "db/memories.db", model_name: str = "BAAI/bge-small-zh-v1.5"):
@@ -202,6 +279,25 @@ class MemoryManager:
         except Exception as e:
             print(f"[!] 讀取使用者記憶列表失敗: {e}")
             return []
+
+    async def delete_memories_by_ids(self, user_id: str, memory_ids: list[int]) -> int:
+        """刪除某使用者指定的記憶 ID 列表"""
+        if not memory_ids:
+            return 0
+        
+        try:
+            placeholders = ",".join("?" for _ in memory_ids)
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute(
+                    f"DELETE FROM user_memories WHERE user_id = ? AND id IN ({placeholders})",
+                    (user_id, *memory_ids)
+                )
+                await db.commit()
+                return cursor.rowcount
+            
+        except Exception as e:
+            print(f"[!] 刪除指定記憶失敗: {e}")
+            return 0
 
     async def clear_user_memories(self, user_id: str) -> int:
         """清空某使用者的所有記憶"""
