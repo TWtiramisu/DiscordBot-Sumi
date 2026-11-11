@@ -5,6 +5,7 @@ import os, json, inspect, asyncio, importlib, typing
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from config import GLOBAL_COGS
+from datetime import date
 
 # utils hot reload
 import utils.memory
@@ -33,17 +34,17 @@ class ModelSelectView(discord.ui.View):
             desc = f"今日: {used:,} / {limit:,} tokens"
             options.append(
                 discord.SelectOption(
-                    label=m,
-                    description=desc,
-                    value=m,
-                    default=(m == cog.model_name)
+                    label = m,
+                    description = desc,
+                    value = m,
+                    default = (m == cog.model_name)
                 )
             )
         self.select = discord.ui.Select(
-            placeholder="選擇要使用的模型...",
-            min_values=1,
-            max_values=1,
-            options=options
+            placeholder = "選擇要使用的模型...",
+            min_values = 1,
+            max_values = 1,
+            options = options
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
@@ -120,6 +121,7 @@ class GroqAICog(commands.Cog):
                     with open(path, "w", encoding="utf-8") as f:
                         json.dump(default, f, ensure_ascii=False, indent=4)
                     print(f"[+] 已自動建立資料庫檔案: {path}")
+
                 except Exception as e:
                     print(f"[!] 建立 {path} 失敗: {e}")
 
@@ -160,6 +162,7 @@ class GroqAICog(commands.Cog):
         try:
             with open(self.token_usage_file, "r", encoding="utf-8") as f:
                 return json.load(f)
+            
         except Exception:
             return {}
 
@@ -168,12 +171,12 @@ class GroqAICog(commands.Cog):
         try:
             with open(self.token_usage_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
+
         except Exception as e:
             print(f"[!] 儲存 token_usage 失敗: {e}")
 
     def add_token_usage(self, model: str, tokens: int):
         """將本次 API 呼叫的 token 數累加進今日紀錄"""
-        from datetime import date
         today = date.today().isoformat()
         data  = self._load_token_usage()
         data.setdefault(today, {})
@@ -182,7 +185,6 @@ class GroqAICog(commands.Cog):
 
     def get_today_usage(self) -> dict[str, int]:
         """取得今日各模型的 token 使用量 { model_id: tokens }"""
-        from datetime import date
         today = date.today().isoformat()
         return self._load_token_usage().get(today, {})
 
@@ -475,6 +477,28 @@ class GroqAICog(commands.Cog):
             view = view
         )
         view.message = msg
+
+    @commands.command(name="token", description="查看當前 AI 模型的今日 Token 使用量")
+    async def check_token_usage(self, ctx: commands.Context):
+        """查看當前模型今日已使用的 Token 數量與上限"""
+        today_usage = self.get_today_usage()
+        used = today_usage.get(self.model_name, 0)
+        limit = MODEL_LIST.get(self.model_name, 0)
+
+        content = (
+            f"**當前模型 Token 使用狀況**\n"
+            f"- **模型名稱**：`{self.model_name}`\n"
+        )
+        if limit > 0:
+            pct = (used / limit) * 100
+            content += f"- **今日用量**：`{used:,}` / `{limit:,}` tokens ({pct:.1f}%)\n"
+
+        else:
+            content += f"- **今日用量**：`{used:,}` tokens（未設定每日上限）\n"
+
+        content += "-# 數據僅供參考，並未代表真實使用情況。"
+
+        await ctx.reply(content)
 
 
 async def setup(bot: commands.Bot):
