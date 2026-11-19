@@ -6,39 +6,135 @@ from fastembed import TextEmbedding
 
 
 
+class MemoryChunkSelect(discord.ui.Select):
+    """記憶區塊下拉選單（每個選單最多 25 條記憶）"""
+    def __init__(self, parent_view: "MemorySelectView", chunk_index: int, options: list[discord.SelectOption], placeholder: str, row: int):
+        super().__init__(
+            placeholder=placeholder,
+            min_values=0,
+            max_values=len(options),
+            options=options,
+            row=row
+        )
+        self.parent_view = parent_view
+        self.chunk_index = chunk_index
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.parent_view.handle_select(interaction, self.chunk_index, [int(v) for v in self.values])
+
+
 class MemorySelectView(discord.ui.View):
-    def __init__(self, memory_manager: MemoryManager, author_id: int, target_user: discord.User | discord.Member, memories: list[dict], timeout: float = 60.0):
+    """整合型記憶選單：瀏覽與複選刪除"""
+    def __init__(
+        self,
+        memory_manager: "MemoryManager",
+        author_id: int,
+        target_user: discord.User | discord.Member,
+        memories: list[dict],
+        timeout: float = 60.0
+    ):
         super().__init__(timeout=timeout)
         self.memory_manager = memory_manager
         self.author_id = author_id
         self.target_user = target_user
         self.memories = memories
         self.message: discord.Message | None = None
+        self.selected_per_menu: dict[int, set[int]] = {}
+        self.select_menus: list[MemoryChunkSelect] = []
 
-        # 最多支援 25 個選項（Discord 限制）
-        display_memories = memories[:25]
-        options = []
-        for m in display_memories:
-            fact_label = m["fact"][:95] + ("..." if len(m["fact"]) > 95 else "")
-            date_str = m["created_at"][:10] if m.get("created_at") else ""
-            desc = f"ID: {m['id']}" + (f" | 記於 {date_str}" if date_str else "")
-            options.append(
-                discord.SelectOption(
-                    label = fact_label,
-                    description = desc[:100],
-                    value = str(m["id"])
+        # 按鈕實例（複選時動態加入）
+        self.btn_delete: discord.ui.Button | None = None
+        self.btn_cancel: discord.ui.Button | None = None
+
+        # 每個選單最多 25 條，Discord 訊息最多 5 個 ActionRow，保留 1 行給按鈕，最多支援 4 個選單（100 條）
+        chunk_size = 25
+        max_chunks = 4
+        display_memories = memories[:max_chunks * chunk_size]
+        chunks = [display_memories[i:i + chunk_size] for i in range(0, len(display_memories), chunk_size)]
+        self.button_row = min(len(chunks), 4)
+
+        for i, chunk in enumerate(chunks):
+            options = []
+            start_num = i * chunk_size + 1
+            end_num = start_num + len(chunk) - 1
+            for m in chunk:
+                fact_label = m["fact"][:95] + ("..." if len(m["fact"]) > 95 else "")
+                date_str = m["created_at"][:10] if m.get("created_at") else ""
+                desc = f"ID: {m['id']}" + (f" | 記於 {date_str}" if date_str else "")
+                options.append(
+                    discord.SelectOption(
+                        label=fact_label,
+                        description=desc[:100],
+                        value=str(m["id"])
+                    )
                 )
+
+            if len(chunks) == 1:
+                placeholder = "點擊瀏覽或勾選欲刪除的記憶 (可複選)..."
+            else:
+                placeholder = f"記憶 {start_num}~{end_num} (點擊瀏覽/勾選欲刪除項目)..."
+
+            select = MemoryChunkSelect(
+                parent_view=self,
+                chunk_index=i,
+                options=options,
+                placeholder=placeholder,
+                row=i
+            )
+            self.select_menus.append(select)
+            self.add_item(select)
+
+    def get_total_selected(self) -> set[int]:
+        if not self.selected_per_menu:
+            return set()
+        return set().union(*self.selected_per_menu.values())
+
+    def get_content(self, total_selected: set[int]) -> str:
+        target_name = "你" if self.target_user.id == self.author_id else f"**{self.target_user.display_name}**"
+        total_count = len(self.memories)
+        note = f"（共 {total_count} 條）"
+        if total_count > 100:
+            note = f"（共 {total_count} 條，選單展示最新 100 條）"
+
+        if total_selected:
+            return (
+                f"**Sumi 關於 {target_name} 的長期記憶 {note}**：\n"
+                f"已勾選 **{len(total_selected)}** 條記憶，請確認是否刪除或取消："
+            )
+        else:
+            return (
+                f"**Sumi 關於 {target_name} 的長期記憶 {note}**：\n"
+                f"請透過下方選單瀏覽記憶；如需刪除，可直接於選單中複選勾選。"
             )
 
-        self.select_menu = discord.ui.Select(
-            placeholder = "請選擇要刪除的記憶（可複選）",
-            min_values = 1,
-            max_values = len(options),
-            options = options,
-            row = 0
-        )
-        self.select_menu.callback = self.select_callback
-        self.add_item(self.select_menu)
+    def update_buttons(self, total_selected: set[int]):
+        count = len(total_selected)
+        if count > 0:
+            if self.btn_delete is None:
+                self.btn_delete = discord.ui.Button(
+                    label=f"刪除所選記憶 ({count})",
+                    style=discord.ButtonStyle.danger,
+                    row=self.button_row
+                )
+                self.btn_delete.callback = self.delete_button_callback
+                self.add_item(self.btn_delete)
+
+                self.btn_cancel = discord.ui.Button(
+                    label="取消",
+                    style=discord.ButtonStyle.secondary,
+                    row=self.button_row
+                )
+                self.btn_cancel.callback = self.cancel_button_callback
+                self.add_item(self.btn_cancel)
+            else:
+                self.btn_delete.label = f"刪除所選記憶 ({count})"
+        else:
+            if self.btn_delete is not None:
+                self.remove_item(self.btn_delete)
+                self.btn_delete = None
+            if self.btn_cancel is not None:
+                self.remove_item(self.btn_cancel)
+                self.btn_cancel = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
@@ -46,9 +142,31 @@ class MemorySelectView(discord.ui.View):
             return False
         return True
 
-    async def select_callback(self, interaction: discord.Interaction):
-        selected_ids = [int(v) for v in self.select_menu.values]
-        deleted_count = await self.memory_manager.delete_memories_by_ids(str(self.target_user.id), selected_ids)
+    async def handle_select(self, interaction: discord.Interaction, chunk_index: int, values: list[int]):
+        self.selected_per_menu[chunk_index] = set(values)
+        total_selected = self.get_total_selected()
+
+        # 更新 option.default 狀態
+        for select in self.select_menus:
+            for opt in select.options:
+                opt.default = (int(opt.value) in total_selected)
+
+        self.update_buttons(total_selected)
+        await interaction.response.edit_message(
+            content=self.get_content(total_selected),
+            view=self
+        )
+
+    async def delete_button_callback(self, interaction: discord.Interaction):
+        total_selected = self.get_total_selected()
+        if not total_selected:
+            await interaction.response.send_message("[!] 目前沒有選取任何記憶喔！", ephemeral=True)
+            return
+
+        deleted_count = await self.memory_manager.delete_memories_by_ids(
+            str(self.target_user.id),
+            list(total_selected)
+        )
         target_name = self.target_user.display_name
         self.stop()
         await interaction.response.edit_message(
@@ -56,25 +174,23 @@ class MemorySelectView(discord.ui.View):
             view=None
         )
 
-    @discord.ui.button(label="清空全部記憶", style=discord.ButtonStyle.danger, emoji="💥", row=1)
-    async def clear_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        count = await self.memory_manager.clear_user_memories(str(self.target_user.id))
-        target_name = self.target_user.display_name
-        self.stop()
+    async def cancel_button_callback(self, interaction: discord.Interaction):
+        self.selected_per_menu.clear()
+        for select in self.select_menus:
+            for opt in select.options:
+                opt.default = False
+        self.update_buttons(set())
         await interaction.response.edit_message(
-            content=f"[v] 成功清空 **{target_name}** 的所有長期記憶（共 {count} 條）！",
-            view=None
+            content=self.get_content(set()),
+            view=self
         )
-
-    @discord.ui.button(label="取消", style=discord.ButtonStyle.secondary, row=1)
-    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.stop()
-        await interaction.response.edit_message(content="[!] 已取消記憶管理操作。", view=None)
 
     async def on_timeout(self):
         if self.message:
             try:
-                await self.message.edit(view=None)
+                for item in self.children:
+                    item.disabled = True
+                await self.message.edit(view=self)
             except discord.HTTPException:
                 pass
 
