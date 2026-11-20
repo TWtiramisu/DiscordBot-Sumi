@@ -5,7 +5,6 @@ import aiosqlite
 from fastembed import TextEmbedding
 
 
-
 class MemoryChunkSelect(discord.ui.Select):
     """記憶區塊下拉選單（每個選單最多 25 條記憶）"""
     def __init__(self, parent_view: "MemorySelectView", chunk_index: int, options: list[discord.SelectOption], placeholder: str, row: int):
@@ -193,7 +192,6 @@ class MemorySelectView(discord.ui.View):
                 await self.message.edit(view=self)
             except discord.HTTPException:
                 pass
-
 
 
 class MemoryManager:

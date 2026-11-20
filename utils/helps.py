@@ -1,57 +1,69 @@
+from typing import Literal, Optional, Tuple
+
 import discord
-from discord.ui import LayoutView, Container, ActionRow, Separator, TextDisplay
 from discord.app_commands import Choice
+from discord.ui import ActionRow, Container, LayoutView, Separator, TextDisplay
 
-from config import GLOBAL_COGS, BOT_PREFIX
+from config import BOT_PREFIX, GLOBAL_COGS
 
-def get_help_options(mode=None):
+
+def get_help_options(mode: Optional[Literal["choice"]] = None):
     options = []
-    
+    cogs_items = list(GLOBAL_COGS.items())
+
     if mode is None:
-        for cog_category, cog_object in GLOBAL_COGS.items():
-            cmds, slash_cmds = cog_object.get_commands(), cog_object.get_app_commands()
-            if not cmds and not slash_cmds: continue
+        for cog_category, cog_object in cogs_items:
+            cmds = cog_object.get_commands()
+            slash_cmds = cog_object.get_app_commands()
+            if not cmds and not slash_cmds:
+                continue
 
             options.append(
                 discord.SelectOption(
-                    label = getattr(cog_object, "title", cog_category),
-                    description = getattr(cog_object, "description", "暫無分類說明"),
-                    emoji = getattr(cog_object, "emoji", "🔳"),
-                    value = cog_category
+                    label=getattr(cog_object, "title", cog_category),
+                    description=getattr(cog_object, "description", "暫無分類說明"),
+                    emoji=getattr(cog_object, "emoji", "🔳"),
+                    value=cog_category,
                 )
             )
 
     elif mode == "choice":
-        for cog_category, cog_object in GLOBAL_COGS.items():
-            cmds, slash_cmds = cog_object.get_commands(), cog_object.get_app_commands()
-            if not cmds and not slash_cmds: continue
-            
+        for cog_category, cog_object in cogs_items:
+            cmds = cog_object.get_commands()
+            slash_cmds = cog_object.get_app_commands()
+            if not cmds and not slash_cmds:
+                continue
+
             options.append(
                 Choice(
-                    name = getattr(cog_object, "title", cog_category),
-                    value = cog_category
+                    name=getattr(cog_object, "title", cog_category),
+                    value=cog_category,
                 )
             )
 
     return options
 
-def get_categoryDescriptions(category=None):
+
+def get_category_descriptions(category: Optional[str] = None) -> Tuple[str, list[str], discord.Color]:
     description = []
+    cogs_items = list(GLOBAL_COGS.items())
 
     if category is None:
         title = "📚 目錄"
         color = discord.Color.blue()
 
-        for cog_category, cog_object in GLOBAL_COGS.items():
-            cmds, slash_cmds = cog_object.get_commands(), cog_object.get_app_commands()
-            if not cmds and not slash_cmds: continue
+        for _, cog_object in cogs_items:
+            cmds = cog_object.get_commands()
+            slash_cmds = cog_object.get_app_commands()
+            if not cmds and not slash_cmds:
+                continue
             description.append(f"### {cog_object.title}\n- {cog_object.description}")
 
     else:
         target_cog = None
 
-        for cog_category, cog_object in GLOBAL_COGS.items():
-            if category.lower() == cog_category:
+        for cog_category, cog_object in cogs_items:
+            if category.lower() == cog_category.lower():
                 title = f"{getattr(cog_object, 'emoji', ' ')} {getattr(cog_object, 'title', cog_category)}"
                 color = getattr(cog_object, "color", discord.Color.light_gray())
                 target_cog = cog_object
@@ -59,16 +71,18 @@ def get_categoryDescriptions(category=None):
 
         if target_cog is None:
             title = "error"
+            color = discord.Color.red()
             description.append("category not found")
-
         else:
-            cmds, slash_cmds = target_cog.get_commands(), target_cog.get_app_commands()
+            cmds = target_cog.get_commands()
+            slash_cmds = target_cog.get_app_commands()
             if cmds:
                 description.append("### 前綴指令")
                 for cmd in cmds:
                     usage = getattr(cmd, "usage", None)
                     name, desc = cmd.name, cmd.description
-                    description.append(f"`{BOT_PREFIX}{name} {usage}` {desc}".replace(" None", ""))
+                    cmd_line = f"`{BOT_PREFIX}{name} {usage}` {desc}".replace(" None", "")
+                    description.append(cmd_line)
 
             if slash_cmds:
                 description.append("### 應用程式指令")
@@ -78,35 +92,42 @@ def get_categoryDescriptions(category=None):
 
     return title, description, color
 
+
+# 保留舊函式名稱別名
+get_categoryDescriptions = get_category_descriptions
+
+
 class ContentsView(LayoutView):
-    def __init__(self, author, category=None):
+    def __init__(self, author: discord.User | discord.Member, category: Optional[str] = None):
         super().__init__()
         self.author = author
-        self.add_item(self.myContainer(author, category))
+        self.add_item(self.MyContainer(author, category))
 
-    async def interaction_check(self, interaction: discord.Interaction):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.author.id
 
-    class helpSelect(ActionRow):
-        def __init__(self, author, options):
+    class HelpSelect(ActionRow):
+        def __init__(self, author: discord.User | discord.Member, options: list[discord.SelectOption]):
             super().__init__()
             self.author = author
             self.menu = discord.ui.Select(placeholder="點擊展開功能導覽", options=options)
             self.menu.callback = self.callback
             self.add_item(self.menu)
 
-        async def callback(self, interaction:discord.Interaction):
-            await interaction.response.edit_message(view=ContentsView(self.author, self.menu.values[0]))
+        async def callback(self, interaction: discord.Interaction):
+            await interaction.response.edit_message(
+                view=ContentsView(self.author, self.menu.values[0])
+            )
 
-    class myContainer(Container):
-        def __init__(self, author, category):
-            title, description, color = get_categoryDescriptions(category)
+    class MyContainer(Container):
+        def __init__(self, author: discord.User | discord.Member, category: Optional[str]):
+            title, description, color = get_category_descriptions(category)
             super().__init__(accent_color=color)
             options = get_help_options()
 
-            sp = Separator() #分隔線組件
+            sp = Separator()  # 分隔線組件
 
             self.add_item(TextDisplay(f"# {title}"))
             self.add_item(sp)
             self.add_item(TextDisplay("\n".join(description)))
-            self.add_item(ContentsView.helpSelect(author, options))
+            self.add_item(ContentsView.HelpSelect(author, options))

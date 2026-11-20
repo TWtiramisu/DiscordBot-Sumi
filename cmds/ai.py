@@ -1,11 +1,17 @@
+import asyncio
+import importlib
+import inspect
+import json
+import os
+import typing
+from datetime import date
+
 import discord
 from discord.ext import commands
-
-import os, json, inspect, asyncio, importlib, typing
-from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
+
 from config import GLOBAL_COGS
-from datetime import date
 
 # utils hot reload
 import utils.memory
@@ -17,8 +23,8 @@ MODEL_LIST: dict[str, int] = {
     "qwen/qwen3.8-27b": 200_000,
     "openai/gpt-oss-120b": 200_000,
     "openai/gpt-oss-20b": 200_000,
-
 }
+
 
 class ModelSelectView(discord.ui.View):
     """開發者專屬：切換 AI 模型的 Select Menu"""
@@ -34,17 +40,17 @@ class ModelSelectView(discord.ui.View):
             desc = f"今日: {used:,} / {limit:,} tokens"
             options.append(
                 discord.SelectOption(
-                    label = m,
-                    description = desc,
-                    value = m,
-                    default = (m == cog.model_name)
+                    label=m,
+                    description=desc,
+                    value=m,
+                    default=(m == cog.model_name),
                 )
             )
         self.select = discord.ui.Select(
-            placeholder = "選擇要使用的模型...",
-            min_values = 1,
-            max_values = 1,
-            options = options
+            placeholder="選擇要使用的模型...",
+            min_values=1,
+            max_values=1,
+            options=options,
         )
         self.select.callback = self.on_select
         self.add_item(self.select)
@@ -54,15 +60,14 @@ class ModelSelectView(discord.ui.View):
         self.cog.model_name = chosen_id
         self.stop()
         await interaction.response.edit_message(
-            content = f"[v] 已切換模型為 `{chosen_id}`",
-            view = None
+            content=f"[v] 已切換模型為 `{chosen_id}`",
+            view=None,
         )
 
     async def on_timeout(self):
         if self.message:
             try:
                 await self.message.edit(content="[x] 模型選擇逾時，已取消。", view=None)
-                
             except Exception:
                 pass
 
@@ -85,14 +90,14 @@ class GroqAICog(commands.Cog):
 
         load_dotenv()
         self.ai_client = AsyncOpenAI(
-            api_key = os.getenv("GROQ_API_KEY"),
-            base_url = "https://api.groq.com/openai/v1"
+            api_key=os.getenv("GROQ_API_KEY"),
+            base_url="https://api.groq.com/openai/v1",
         )
         # default model
         self.model_name = "qwen/qwen3.8-27b"
-        
+
         # database files
-        self.memory_file      = "db/chat_memory.json"
+        self.memory_file = "db/chat_memory.json"
         self.token_usage_file = "db/token_usage.json"
         self.ensure_db_files()
 
@@ -101,9 +106,12 @@ class GroqAICog(commands.Cog):
 
         # chat memory
         self.chat_history = self.load_memory()
-        
+
         # target channel
         self.target_channel_id = 1569521240538873946
+
+        # 保存背景任務的強引用，防止垃圾回收
+        self.background_tasks: set[asyncio.Task] = set()
 
     async def cog_load(self):
         """當 Cog 載入時初始化向量資料庫"""
@@ -113,7 +121,7 @@ class GroqAICog(commands.Cog):
         """檢查 db/ 是否有必要的 JSON 檔案，若無則創建"""
         os.makedirs("db", exist_ok=True)
         for path, default in [
-            (self.memory_file,      {}),
+            (self.memory_file, {}),
             (self.token_usage_file, {}),
         ]:
             if not os.path.exists(path):
@@ -121,7 +129,6 @@ class GroqAICog(commands.Cog):
                     with open(path, "w", encoding="utf-8") as f:
                         json.dump(default, f, ensure_ascii=False, indent=4)
                     print(f"[+] 已自動建立資料庫檔案: {path}")
-
                 except Exception as e:
                     print(f"[!] 建立 {path} 失敗: {e}")
 
@@ -130,24 +137,19 @@ class GroqAICog(commands.Cog):
         if os.path.exists(self.memory_file):
             try:
                 with open(self.memory_file, "r", encoding="utf-8") as f:
-                    # JSON 中的 Key 是字串，讀取時轉回 int (channel_id)
                     data = json.load(f)
                     return {int(k): v for k, v in data.items()}
-                
             except Exception as e:
                 print(f"[!] 載入記憶檔失敗: {e}")
                 return {}
-            
         return {}
 
     def save_memory(self):
         """將對話歷史紀錄寫入 JSON 檔案"""
         try:
             with open(self.memory_file, "w", encoding="utf-8") as f:
-                # 把 int 的 channel_id 轉成 str 以符合 JSON 格式
                 data = {str(k): v for k, v in self.chat_history.items()}
                 json.dump(data, f, ensure_ascii=False, indent=4)
-
         except Exception as e:
             print(f"[!] 儲存記憶檔失敗: {e}")
 
@@ -162,7 +164,6 @@ class GroqAICog(commands.Cog):
         try:
             with open(self.token_usage_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-            
         except Exception:
             return {}
 
@@ -171,14 +172,13 @@ class GroqAICog(commands.Cog):
         try:
             with open(self.token_usage_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
-
         except Exception as e:
             print(f"[!] 儲存 token_usage 失敗: {e}")
 
     def add_token_usage(self, model: str, tokens: int):
         """將本次 API 呼叫的 token 數累加進今日紀錄"""
         today = date.today().isoformat()
-        data  = self._load_token_usage()
+        data = self._load_token_usage()
         data.setdefault(today, {})
         data[today][model] = data[today].get(model, 0) + tokens
         self._save_token_usage(data)
@@ -198,7 +198,6 @@ class GroqAICog(commands.Cog):
         prefix = self.bot.command_prefix
         if isinstance(prefix, str) and message.content.startswith(prefix):
             return
-        
         elif isinstance(prefix, (list, tuple)) and message.content.startswith(tuple(prefix)):
             return
 
@@ -208,25 +207,22 @@ class GroqAICog(commands.Cog):
             return
 
         # 觸發條件判斷：
-        # 位於指定的專屬頻道
+        # 1. 位於指定的專屬頻道
         is_in_target_channel = (message.channel.id == self.target_channel_id)
-        # 機器人被 @tag (mention)
+        # 2. 機器人被 @tag (mention)
         is_mentioned = (self.bot.user in message.mentions)
 
-        # 訊息為回覆 (reply) 機器人
+        # 3. 訊息為回覆 (reply) 機器人
         is_reply_to_bot = False
         ref_msg = None
         if message.reference and message.reference.message_id:
             if isinstance(message.reference.resolved, discord.Message):
                 ref_msg = message.reference.resolved
-
             elif message.reference.cached_message:
                 ref_msg = message.reference.cached_message
-
             else:
                 try:
                     ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                    
                 except Exception:
                     ref_msg = None
 
@@ -247,7 +243,6 @@ class GroqAICog(commands.Cog):
             # 若使用者僅 tag 或回覆機器人但未輸入其他文字，給予預設問候
             if is_mentioned or is_reply_to_bot:
                 prompt = "你好"
-
             else:
                 return
 
@@ -267,7 +262,6 @@ class GroqAICog(commands.Cog):
                 # 將使用者的最新發言寫入記憶（包含發言者名稱與 ID；若使用 Reply 則明確標註被回覆的對象與內容）
                 if ref_msg and ref_msg.content:
                     target_name = "你" if ref_msg.author.id == self.bot.user.id else ref_msg.author.display_name
-                    # 避免被回覆的內容過長，截取前 150 字作為引用標註
                     ref_snippet = ref_msg.content[:150] + ("..." if len(ref_msg.content) > 150 else "")
                     user_content = f"[{message.author.display_name} | ID: {message.author.id}] (回覆了 {target_name} 的訊息「{ref_snippet}」): {prompt}"
                 else:
@@ -275,7 +269,7 @@ class GroqAICog(commands.Cog):
 
                 self.chat_history[channel_id].append({"role": "user", "content": user_content})
 
-                # 限制對話歷史長度
+                # 限制對話歷史長度（最近 10 條）
                 if len(self.chat_history[channel_id]) > 10:
                     self.chat_history[channel_id] = self.chat_history[channel_id][-10:]
 
@@ -285,7 +279,7 @@ class GroqAICog(commands.Cog):
                     user_id=user_id_str,
                     query=prompt,
                     top_k=3,
-                    threshold=0.50
+                    threshold=0.50,
                 )
                 recalled_str = "\n".join([f"- {m}" for m in recalled_memories]) if recalled_memories else "無特定歷史紀錄"
 
@@ -311,21 +305,21 @@ class GroqAICog(commands.Cog):
                 """)
 
                 messages = [
-                    {
-                        "role": "system",
-                        "content": system_content
-                    }
+                    {"role": "system", "content": system_content}
                 ] + self.chat_history[channel_id]
 
                 # 呼叫 API
                 response = await self.ai_client.chat.completions.create(
-                    model = self.model_name,
-                    messages = messages,
-                    temperature = 0.7,
-                    max_tokens = 1024
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=1024,
                 )
-                
-                reply = response.choices[0].message.content
+
+                reply = (response.choices[0].message.content or "").strip()
+                if not reply:
+                    await message.channel.send("[x] AI 回傳了空內容，可能觸發了安全審查機制或模型限制。")
+                    return
 
                 # 累加本次 token 用量
                 if response.usage:
@@ -335,35 +329,34 @@ class GroqAICog(commands.Cog):
                 self.chat_history[channel_id].append({"role": "assistant", "content": reply})
                 self.save_memory()
 
-                # 背景異步提煉與儲存記憶（不阻塞發送訊息）
-                asyncio.create_task(
+                # 背景異步提煉與儲存記憶（保存強引用防 GC）
+                task = asyncio.create_task(
                     self.memory_manager.extract_and_save_facts(
                         ai_client=self.ai_client,
                         model_name=self.model_name,
                         user_id=user_id_str,
                         user_name=message.author.display_name,
                         user_message=prompt,
-                        bot_reply=reply
+                        bot_reply=reply,
                     )
                 )
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
 
-                # 發送訊息（優先使用 reply，若被刪除等情況則 fallback 為 channel.send）
+                # 發送訊息（長訊息自動分段）
                 if len(reply) > 2000:
-                    chunks = [reply[i:i+1900] for i in range(0, len(reply), 1900)]
+                    chunks = [reply[i : i + 1900] for i in range(0, len(reply), 1900)]
                     for i, chunk in enumerate(chunks):
                         if i == 0:
                             try:
                                 await message.reply(chunk)
-
                             except discord.HTTPException:
                                 await message.channel.send(chunk)
-
                         else:
                             await message.channel.send(chunk)
                 else:
                     try:
                         await message.reply(reply)
-
                     except discord.HTTPException:
                         await message.channel.send(reply)
 
@@ -378,7 +371,6 @@ class GroqAICog(commands.Cog):
             del self.chat_history[channel_id]
             self.save_memory()
             await ctx.reply("[v] Sumi 已經忘記本頻道的上下文囉！")
-
         else:
             await ctx.reply("[x] 本頻道目前沒有任何對話記憶喔。")
 
@@ -387,7 +379,7 @@ class GroqAICog(commands.Cog):
         self,
         ctx: commands.Context,
         target: typing.Optional[discord.User | discord.Member] = None,
-        mode: str = None
+        mode: typing.Optional[str] = None,
     ):
         """查看與管理長期記憶（選單式展示，可直接複選刪除；開發者可 tag 他人）"""
         if target is not None and target.id != ctx.author.id:
@@ -412,20 +404,24 @@ class GroqAICog(commands.Cog):
 
         memories = await self.memory_manager.get_user_memories(user_id)
         if not memories:
-            msg = "Sumi 目前還沒有記住關於你的特定生活細節喔！多跟我聊聊吧～" if not is_other else f"Sumi 目前沒有關於 **{target_name}** 的特定生活細節喔！"
+            msg = (
+                "Sumi 目前還沒有記住關於你的特定生活細節喔！多跟我聊聊吧～"
+                if not is_other
+                else f"Sumi 目前沒有關於 **{target_name}** 的特定生活細節喔！"
+            )
             await ctx.reply(msg)
             return
 
         # 透過選單式展示與互動管理
         view = MemorySelectView(
-            memory_manager = self.memory_manager,
-            author_id = ctx.author.id,
-            target_user = target_user,
-            memories = memories
+            memory_manager=self.memory_manager,
+            author_id=ctx.author.id,
+            target_user=target_user,
+            memories=memories,
         )
         msg = await ctx.reply(
             view.get_content(set()),
-            view = view
+            view=view,
         )
         view.message = msg
 
@@ -437,7 +433,7 @@ class GroqAICog(commands.Cog):
         view = ModelSelectView(cog=self, today_usage=today_usage)
         msg = await ctx.reply(
             f"目前使用模型：`{self.model_name}`\n請從下方選單選擇要切換的模型：",
-            view = view
+            view=view,
         )
         view.message = msg
 
@@ -455,12 +451,10 @@ class GroqAICog(commands.Cog):
         if limit > 0:
             pct = (used / limit) * 100
             content += f"- **今日用量**：`{used:,}` / `{limit:,}` tokens ({pct:.1f}%)\n"
-
         else:
             content += f"- **今日用量**：`{used:,}` tokens（未設定每日上限）\n"
 
         content += "-# 數據僅供參考，並未代表真實使用情況。"
-
         await ctx.reply(content)
 
 

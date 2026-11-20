@@ -1,41 +1,55 @@
+import asyncio
+import datetime
+import os
+import sys
+
 import discord
 from discord.ext import commands
-
-import os, asyncio, datetime
-from config import Info, BOT_PREFIX
 from dotenv import load_dotenv
 
-#建立一個繼承Bot的類別
+from config import BOT_PREFIX, Info
+
+load_dotenv()
+
+
 class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.all()
-        intents.members = True
         super().__init__(
-            command_prefix = BOT_PREFIX, 
-            owner_id = Info.ownerID,
-            intents = intents, 
-            help_command = None,
-            allowed_mentions = discord.AllowedMentions(replied_user=False) #禁用reply時的黃色提示
+            command_prefix=BOT_PREFIX,
+            owner_id=Info.owner_id,
+            intents=intents,
+            help_command=None,
+            allowed_mentions=discord.AllowedMentions(replied_user=False),  # 禁用 reply 時的提示
         )
 
-    async def setup_hook(self): #啟動時自動載入所有 Cog
-        for filename in os.listdir("./cmds"):
-            if filename.endswith(".py"):
-                await self.load_extension(f"cmds.{filename[:-3]}")
-        print(f"Cog have been loaded.")
+    async def setup_hook(self):  # 啟動時自動載入所有 Cog
+        cmds_dir = "./cmds"
+        if os.path.exists(cmds_dir):
+            for filename in os.listdir(cmds_dir):
+                if filename.endswith(".py") and not filename.startswith("_"):
+                    await self.load_extension(f"cmds.{filename[:-3]}")
+        print("Cog have been loaded.")
 
     async def on_ready(self):
-        print(f"bot {self.user.name} joined at {datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')}!")
+        now_str = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        print(f"bot {self.user.name} joined at {now_str}!")
         activity = discord.CustomActivity(name="正在烤蛋糕")
         await self.change_presence(status=discord.Status.idle, activity=activity)
 bot = MyBot()
 
+
 async def main():
+    token = os.getenv("TOKEN")
+    if not token:
+        print("[-] 錯誤：未在環境變數或 .env 中找到 TOKEN！", file=sys.stderr)
+        return
+
     try:
-        load_dotenv()
-        await bot.start(os.getenv("TOKEN"))
+        await bot.start(token)
     except asyncio.CancelledError:
         print("[-] 機器人連線被取消。")
+
 
 if __name__ == "__main__":
     try:
