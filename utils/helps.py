@@ -70,9 +70,9 @@ def get_category_descriptions(category: Optional[str] = None) -> Tuple[str, list
                 break
 
         if target_cog is None:
-            title = "error"
+            title = "Error!"
             color = discord.Color.red()
-            description.append("category not found")
+            description.append("沒有找到分類，請檢查拼字錯誤或使用選單!")
         else:
             cmds = target_cog.get_commands()
             slash_cmds = target_cog.get_app_commands()
@@ -91,10 +91,6 @@ def get_category_descriptions(category: Optional[str] = None) -> Tuple[str, list
                     description.append(f"`/{name}` {desc}")
 
     return title, description, color
-
-
-# 保留舊函式名稱別名
-get_categoryDescriptions = get_category_descriptions
 
 
 class ContentsView(LayoutView):

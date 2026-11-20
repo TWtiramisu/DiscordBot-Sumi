@@ -9,8 +9,6 @@ from dotenv import load_dotenv
 
 from config import BOT_PREFIX, Info
 
-load_dotenv()
-
 
 class MyBot(commands.Bot):
     def __init__(self):
@@ -40,9 +38,10 @@ bot = MyBot()
 
 
 async def main():
+    load_dotenv()
     token = os.getenv("TOKEN")
     if not token:
-        print("[-] 錯誤：未在環境變數或 .env 中找到 TOKEN！", file=sys.stderr)
+        print("[x] 錯誤：未在環境變數或 .env 中找到 TOKEN！", file=sys.stderr)
         return
 
     try:

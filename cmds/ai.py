@@ -108,7 +108,7 @@ class GroqAICog(commands.Cog):
         self.chat_history = self.load_memory()
 
         # target channel
-        self.target_channel_id = 1569521240538873946
+        self.target_channel_id = [1569521240538873946, 1277854863102967859]
 
         # 保存背景任務的強引用，防止垃圾回收
         self.background_tasks: set[asyncio.Task] = set()
@@ -208,7 +208,7 @@ class GroqAICog(commands.Cog):
 
         # 觸發條件判斷：
         # 1. 位於指定的專屬頻道
-        is_in_target_channel = (message.channel.id == self.target_channel_id)
+        is_in_target_channel = (message.channel.id in self.target_channel_id)
         # 2. 機器人被 @tag (mention)
         is_mentioned = (self.bot.user in message.mentions)
 
