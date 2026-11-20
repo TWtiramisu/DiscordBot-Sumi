@@ -86,7 +86,8 @@ class Use(commands.Cog):
             await rawtext_insert("userID", (ctx.author.id,))
 
         view = RawtextsView(ctx.author).add_to_container(EditWhichRaw(ctx.author))
-        await ctx.reply(view=view)
+        msg = await ctx.reply(view=view)
+        view.set_message(msg)
 
     @commands.command(name="say", description="讓機器人說出指定的話")
     async def say(self, ctx: commands.Context, *, content: str):
