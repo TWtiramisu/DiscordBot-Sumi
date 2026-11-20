@@ -18,6 +18,10 @@ import utils.memory
 importlib.reload(utils.memory)
 from utils.memory import MemoryManager, MemorySelectView
 
+import utils.channel
+importlib.reload(utils.channel)
+from utils.channel import ChannelDB, TalkChannelView
+
 # 可用模型清單 { model_id: daily token limit }
 MODEL_LIST: dict[str, int] = {
     "qwen/qwen3.8-27b": 200_000,
@@ -104,18 +108,48 @@ class GroqAICog(commands.Cog):
         # vector memory manager
         self.memory_manager = MemoryManager(db_path="db/memories.db")
 
+        # channel database
+        self.channel_db = ChannelDB(db_path="db/channel.db")
+        self.talk_channels_cache: dict[int, list[int]] = {}
+
         # chat memory
         self.chat_history = self.load_memory()
-
-        # target channel
-        self.target_channel_id = [1569521240538873946, 1277854863102967859]
 
         # 保存背景任務的強引用，防止垃圾回收
         self.background_tasks: set[asyncio.Task] = set()
 
     async def cog_load(self):
-        """當 Cog 載入時初始化向量資料庫"""
+        """當 Cog 載入時初始化向量資料庫與對話頻道資料庫"""
         await self.memory_manager.init_db()
+        await self.channel_db.init_db()
+        await self.load_all_talk_channels()
+
+    async def load_all_talk_channels(self):
+        """載入所有伺服器的指定對話頻道至快取"""
+        self.talk_channels_cache = await self.channel_db.get_all_servers()
+
+    def get_talk_channels_sync(self, guild_id: int) -> list[int]:
+        """從快取同步取得伺服器的指定對話頻道"""
+        return self.talk_channels_cache.get(guild_id, [])
+
+    async def get_talk_channels(self, guild_id: int) -> list[int]:
+        """非同步取得伺服器的指定對話頻道"""
+        if guild_id not in self.talk_channels_cache:
+            channels = await self.channel_db.get_channels(guild_id)
+            self.talk_channels_cache[guild_id] = channels
+        return self.talk_channels_cache.get(guild_id, [])
+
+    async def add_talk_channels(self, guild_id: int, new_channel_ids: list[int]) -> tuple[list[int], list[int]]:
+        """新增伺服器的指定對話頻道並更新快取"""
+        channels, added = await self.channel_db.add_channels(guild_id, new_channel_ids)
+        self.talk_channels_cache[guild_id] = channels
+        return channels, added
+
+    async def remove_talk_channels(self, guild_id: int, remove_channel_ids: list[int]) -> tuple[list[int], int]:
+        """移除伺服器的指定對話頻道並更新快取"""
+        channels, count = await self.channel_db.remove_channels(guild_id, remove_channel_ids)
+        self.talk_channels_cache[guild_id] = channels
+        return channels, count
 
     def ensure_db_files(self):
         """檢查 db/ 是否有必要的 JSON 檔案，若無則創建"""
@@ -208,7 +242,10 @@ class GroqAICog(commands.Cog):
 
         # 觸發條件判斷：
         # 1. 位於指定的專屬頻道
-        is_in_target_channel = (message.channel.id in self.target_channel_id)
+        is_in_target_channel = False
+        if message.guild:
+            target_channels = self.get_talk_channels_sync(message.guild.id)
+            is_in_target_channel = (message.channel.id in target_channels)
         # 2. 機器人被 @tag (mention)
         is_mentioned = (self.bot.user in message.mentions)
 
@@ -425,18 +462,6 @@ class GroqAICog(commands.Cog):
         )
         view.message = msg
 
-    @commands.command(name="models", description="(限開發者) 透過選單切換 AI 模型")
-    @commands.is_owner()
-    async def switch_model(self, ctx: commands.Context):
-        """開發者專屬：透過 Select Menu 切換目前使用的 AI 模型"""
-        today_usage = self.get_today_usage()
-        view = ModelSelectView(cog=self, today_usage=today_usage)
-        msg = await ctx.reply(
-            f"目前使用模型：`{self.model_name}`\n請從下方選單選擇要切換的模型：",
-            view=view,
-        )
-        view.message = msg
-
     @commands.command(name="token", description="查看當前 AI 模型的今日 Token 使用量")
     async def check_token_usage(self, ctx: commands.Context):
         """查看當前模型今日已使用的 Token 數量與上限"""
@@ -456,6 +481,34 @@ class GroqAICog(commands.Cog):
 
         content += "-# 數據僅供參考，並未代表真實使用情況。"
         await ctx.reply(content)
+
+    @commands.command(name="models", description="(限開發者) 透過選單切換 AI 模型")
+    @commands.is_owner()
+    async def switch_model(self, ctx: commands.Context):
+        """開發者專屬：透過 Select Menu 切換目前使用的 AI 模型"""
+        today_usage = self.get_today_usage()
+        view = ModelSelectView(cog=self, today_usage=today_usage)
+        msg = await ctx.reply(
+            f"目前使用模型：`{self.model_name}`\n請從下方選單選擇要切換的模型：",
+            view=view,
+        )
+        view.message = msg
+
+    @commands.command(name="talkchannel", description="(限開發者) 調整伺服器內指定對話頻道")
+    async def talk_channel(self, ctx: commands.Context):
+        """僅開發者使用：設定本伺服器內指定對話頻道"""
+        if ctx.author.id != self.bot.owner_id:
+            await ctx.reply("[x] 只有開發者才能使用此指令。")
+            return
+
+        if ctx.guild is None:
+            await ctx.reply("[x] 此指令僅能在伺服器內使用。")
+            return
+
+        channels = await self.get_talk_channels(ctx.guild.id)
+        view = TalkChannelView(cog=self, guild=ctx.guild, author_id=ctx.author.id, channels=channels)
+        msg = await ctx.reply(content=view.get_content(), view=view)
+        view.message = msg
 
 
 async def setup(bot: commands.Bot):
