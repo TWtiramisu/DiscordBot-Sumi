@@ -1,9 +1,10 @@
-import discord
-from discord.ui import ActionRow, Button, Container, LayoutView, Modal, Select, Separator, TextDisplay, TextInput
-
 import json
 import aiosqlite
 from typing import Any, List, Literal, Optional, Tuple
+
+import discord
+from discord.ui import ActionRow, Button, Container, LayoutView, Modal, Select, Separator, TextDisplay, TextInput
+
 from config import DIV, RAWTEXT_SQL
 
 ALLOWED_COLUMNS = {"userID", "raw1", "raw2", "raw3"}
@@ -115,10 +116,6 @@ class RawtextsView(LayoutView):
         def add_item_chained(self, item) -> "RawtextsView.MyContainer":
             self.add_item(item)
             return self
-
-        # 保留舊方法名稱以防外部引用
-        def addItem(self, item) -> "RawtextsView.MyContainer":
-            return self.add_item_chained(item)
 
 
 class EditWhichRaw(ActionRow):
