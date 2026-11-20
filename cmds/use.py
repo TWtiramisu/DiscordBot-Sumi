@@ -8,12 +8,12 @@ from discord.ext import commands
 from config import GLOBAL_COGS
 
 # utils hot reload
-import utils.rawtexts
-import utils.uses
-importlib.reload(utils.uses)
-importlib.reload(utils.rawtexts)
-from utils.rawtexts import EditWhichRaw, RawtextsView, rawtext_insert, rawtext_select
-from utils.uses import InfosView
+import utils.rawtext
+import utils.use
+importlib.reload(utils.use)
+importlib.reload(utils.rawtext)
+from utils.rawtext import EditWhichRaw, RawtextsView, rawtext_insert, rawtext_select
+from utils.use import InfosView
 
 
 class Use(commands.Cog):

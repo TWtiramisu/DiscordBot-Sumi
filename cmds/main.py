@@ -7,9 +7,9 @@ from discord import app_commands
 from discord.ext import commands
 
 # utils hot reload
-import utils.helps
-importlib.reload(utils.helps)
-from utils.helps import ContentsView, get_help_options
+import utils.help
+importlib.reload(utils.help)
+from utils.help import ContentsView, get_help_options
 
 
 class Main(commands.Cog):

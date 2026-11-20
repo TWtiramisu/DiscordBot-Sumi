@@ -8,9 +8,9 @@ from discord.ext import commands
 from config import GLOBAL_COGS
 
 # utils hot reload
-import utils.musics
-importlib.reload(utils.musics)
-from utils.musics import FFMPEG_OPTIONS, ytdl
+import utils.music
+importlib.reload(utils.music)
+from utils.music import FFMPEG_OPTIONS, ytdl
 
 
 class Music(commands.Cog):
