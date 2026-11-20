@@ -4,7 +4,7 @@ from discord.app_commands import Choice
 
 from config import GLOBAL_COGS, BOT_PREFIX
 
-def get_helpOptions(mode=None):
+def get_help_options(mode=None):
     options = []
     
     if mode is None:
@@ -78,7 +78,7 @@ def get_categoryDescriptions(category=None):
 
     return title, description, color
 
-class contentsView(LayoutView):
+class ContentsView(LayoutView):
     def __init__(self, author, category=None):
         super().__init__()
         self.author = author
@@ -96,17 +96,17 @@ class contentsView(LayoutView):
             self.add_item(self.menu)
 
         async def callback(self, interaction:discord.Interaction):
-            await interaction.response.edit_message(view=contentsView(self.author, self.menu.values[0]))
+            await interaction.response.edit_message(view=ContentsView(self.author, self.menu.values[0]))
 
     class myContainer(Container):
         def __init__(self, author, category):
             title, description, color = get_categoryDescriptions(category)
             super().__init__(accent_color=color)
-            options = get_helpOptions()
+            options = get_help_options()
 
             sp = Separator() #分隔線組件
 
             self.add_item(TextDisplay(f"# {title}"))
             self.add_item(sp)
             self.add_item(TextDisplay("\n".join(description)))
-            self.add_item(contentsView.helpSelect(author, options))
+            self.add_item(ContentsView.helpSelect(author, options))

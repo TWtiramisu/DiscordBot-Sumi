@@ -8,7 +8,7 @@ from typing import Optional
 # utils hot reload
 import utils.helps
 importlib.reload(utils.helps)
-from utils.helps import contentsView, get_helpOptions
+from utils.helps import ContentsView, get_help_options
 
 
 
@@ -18,16 +18,16 @@ class main(commands.Cog):
 
     @commands.command()
     async def help(self, ctx:commands.Context, category=None):
-        await ctx.reply(view=contentsView(ctx.author, category))
+        await ctx.reply(view=ContentsView(ctx.author, category))
 
     #異步函數跟註冊器綁一起的不要動 -> 用autocomplete動態註冊Choice選單
     async def helpOptions_autocomplete(self, interaction:discord.Interaction, current:str):
-        return get_helpOptions("choice")
+        return get_help_options("choice")
     @app_commands.command(name="help", description="查看功能導覽")
     @app_commands.describe(category="分類")
     @app_commands.autocomplete(category=helpOptions_autocomplete)
     async def slash_help(self, interaction:discord.Interaction, category:Optional[str]):
-        await interaction.response.send_message(view=contentsView(interaction.user, category))
+        await interaction.response.send_message(view=ContentsView(interaction.user, category))
 
     @commands.command()
     @commands.is_owner()

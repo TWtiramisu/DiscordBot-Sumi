@@ -8,8 +8,8 @@ from config import GLOBAL_COGS
 import utils.uses, utils.rawtexts
 importlib.reload(utils.uses)
 importlib.reload(utils.rawtexts)
-from utils.uses import infosView
-from utils.rawtexts import rawtextsView, editWhichRaw, rawtext_select, rawtext_insert 
+from utils.uses import InfosView
+from utils.rawtexts import RawtextsView, EditWhichRaw, rawtext_select, rawtext_insert 
 
 
 
@@ -53,7 +53,7 @@ class use(commands.Cog):
     async def info(self, ctx:commands.Context, member:discord.Member=None):
         member = member or ctx.author
 
-        await ctx.reply(view=infosView(member))
+        await ctx.reply(view=InfosView(member))
 
     @commands.command(name="luck", description="今日運勢(僅供參考)")
     async def luck(self, ctx:commands.Context):
@@ -80,7 +80,7 @@ class use(commands.Cog):
         if result is None: 
             await rawtext_insert('userID', (ctx.author.id, )) #sqlite要求參數必須是一組資料 -> 封裝成tuple
 
-        view = rawtextsView(ctx.author).add_to_container(editWhichRaw(ctx.author))
+        view = RawtextsView(ctx.author).add_to_container(EditWhichRaw(ctx.author))
         await ctx.reply(view=view)
 
     @commands.command(name="say", description="讓機器人說出指定的話")
