@@ -97,12 +97,12 @@ class MemorySelectView(discord.ui.View):
 
         if total_selected:
             return (
-                f"**Sumi 關於 {target_name} 的長期記憶 {note}**：\n"
+                f"**苏米 關於 {target_name} 的長期記憶 {note}**：\n"
                 f"已勾選 **{len(total_selected)}** 條記憶，請確認是否刪除或取消："
             )
         else:
             return (
-                f"**Sumi 關於 {target_name} 的長期記憶 {note}**：\n"
+                f"**苏米 關於 {target_name} 的長期記憶 {note}**：\n"
                 f"請透過下方選單瀏覽記憶；如需刪除，可直接於選單中複選勾選。"
             )
 

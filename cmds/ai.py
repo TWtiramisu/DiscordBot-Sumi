@@ -86,7 +86,7 @@ class GroqAICog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.title = "AI Chat"
-        self.description = "與 苏米Sumi 聊天"
+        self.description = "與苏米聊天"
         self.emoji = "✨"
         self.color = discord.Color.gold()
 
@@ -407,11 +407,11 @@ class GroqAICog(commands.Cog):
         if channel_id in self.chat_history:
             del self.chat_history[channel_id]
             self.save_memory()
-            await ctx.reply("[v] Sumi 已經忘記本頻道的上下文囉！")
+            await ctx.reply("[v] 苏米 已經忘記本頻道的上下文囉！")
         else:
             await ctx.reply("[x] 本頻道目前沒有任何對話記憶喔。")
 
-    @commands.command(name="memory", description="查看與管理 苏米Sumi 對你的記憶 (選單瀏覽/刪除)", aliases=["mem"])
+    @commands.command(name="memory", description="查看與管理 苏米 對你的記憶 (選單瀏覽/刪除)", aliases=["mem"])
     async def manage_memories(
         self,
         ctx: commands.Context,
@@ -436,15 +436,15 @@ class GroqAICog(commands.Cog):
         if mode == "allclear":
             count = await self.memory_manager.clear_user_memories(user_id)
             target_text = f"**{target_name}** 的" if is_other else "關於你的"
-            await ctx.reply(f"[v] Sumi 已經清除{target_text} {count} 條長期記憶囉！")
+            await ctx.reply(f"[v] 苏米 已經清除{target_text} {count} 條長期記憶囉！")
             return
 
         memories = await self.memory_manager.get_user_memories(user_id)
         if not memories:
             msg = (
-                "Sumi 目前還沒有記住關於你的特定生活細節喔！多跟我聊聊吧～"
+                "苏米 目前還沒有記住關於你的特定生活細節喔！多跟我聊聊吧～"
                 if not is_other
-                else f"Sumi 目前沒有關於 **{target_name}** 的特定生活細節喔！"
+                else f"苏米 目前沒有關於 **{target_name}** 的特定生活細節喔！"
             )
             await ctx.reply(msg)
             return
