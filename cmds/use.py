@@ -3,11 +3,20 @@ import random
 from typing import Optional
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from config import GLOBAL_COGS
 
 # utils hot reload
+import utils.decorators
+importlib.reload(utils.decorators)
+from utils.decorators import hidden
+
+import utils.help
+importlib.reload(utils.help)
+from utils.help import ContentsView, get_help_options
+
 import utils.use
 importlib.reload(utils.use)
 from utils.use import InfosView
@@ -26,6 +35,22 @@ class Use(commands.Cog):
         self.color = discord.Color.yellow()
 
         GLOBAL_COGS["use"] = self
+
+    @commands.command(name="help", description="查看功能導覽")
+    async def help(self, ctx: commands.Context, category: Optional[str] = None):
+        await ctx.reply(view=ContentsView(ctx.author, category))
+
+    # 動態註冊 Choice 選單
+    async def help_options_autocomplete(self, interaction: discord.Interaction, current: str):
+        return get_help_options("choice")
+
+    @hidden
+    @app_commands.command(name="help", description="查看功能導覽")
+    @app_commands.describe(category="要查詢的分類")
+    @app_commands.rename(category="分類")
+    @app_commands.autocomplete(category=help_options_autocomplete)
+    async def slash_help(self, interaction: discord.Interaction, category: Optional[str] = None):
+        await interaction.response.send_message(view=ContentsView(interaction.user, category))
 
     @commands.command(name="avatar", usage="<@用戶>", description="獲取用戶頭像")
     async def avatar(self, ctx: commands.Context, member: discord.Member):

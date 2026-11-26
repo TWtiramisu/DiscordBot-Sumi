@@ -9,9 +9,28 @@ from config import BOT_PREFIX, GLOBAL_COGS
 MAX_DISCORD_OPTIONS = 25
 
 
+def _is_hidden_cmd(cmd: Any) -> bool:
+    if getattr(cmd, "hidden", False):
+        return True
+    callback = getattr(cmd, "callback", None)
+    return bool(getattr(callback, "__hidden__", False))
+
+
+def _is_hidden_slash_cmd(slash_cmd: Any) -> bool:
+    extras = getattr(slash_cmd, "extras", None)
+    if isinstance(extras, dict) and extras.get("hidden") is True:
+        return True
+    callback = getattr(slash_cmd, "callback", None)
+    return bool(getattr(callback, "__hidden__", False))
+
+
 def _get_visible_commands(cog_object: Any) -> Tuple[list[Any], list[Any]]:
-    cmds = [cmd for cmd in cog_object.get_commands() if not getattr(cmd, "hidden", False)]
-    slash_cmds = list(cog_object.get_app_commands())
+    cmds = [cmd for cmd in cog_object.get_commands() if not _is_hidden_cmd(cmd)]
+    slash_cmds = [
+        slash_cmd
+        for slash_cmd in cog_object.get_app_commands()
+        if not _is_hidden_slash_cmd(slash_cmd)
+    ]
     return cmds, slash_cmds
 
 
