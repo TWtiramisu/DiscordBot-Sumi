@@ -1,4 +1,6 @@
 import datetime
+import importlib
+import sys
 from typing import Optional
 
 from discord.ext import commands
@@ -58,6 +60,10 @@ class Main(commands.Cog):
         target = extension if extension.startswith("cmds.") else f"cmds.{extension}"
 
         try:
+            for name, mod in list(sys.modules.items()):
+                if name.startswith("utils.") and mod is not None:
+                    importlib.reload(mod)
+
             await self.bot.reload_extension(target)
             await ctx.reply(f"[v] 成功重新載入 Cog: `{target}`")
             print(f"[{datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')}] Reloaded: {target}")

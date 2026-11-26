@@ -1,15 +1,10 @@
 import asyncio
-import importlib
 from typing import Optional
 
 import discord
 from discord.ext import commands
 
 from config import GLOBAL_COGS
-
-# utils hot reload
-import utils.music
-importlib.reload(utils.music)
 from utils.music import FFMPEG_OPTIONS, MusicCardView, NowPlayingView, QueueView, ytdl
 
 

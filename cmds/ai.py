@@ -1,5 +1,4 @@
 import asyncio
-import importlib
 import inspect
 import json
 import os
@@ -12,15 +11,8 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 from config import GLOBAL_COGS
-
-# utils hot reload
-import utils.memory
-importlib.reload(utils.memory)
-from utils.memory import MemoryManager, MemorySelectView
-
-import utils.channel
-importlib.reload(utils.channel)
 from utils.channel import ChannelDB, TalkChannelView
+from utils.memory import MemoryManager, MemorySelectView
 
 # 可用模型清單 { model_id: daily token limit }
 MODEL_LIST: dict[str, int] = {

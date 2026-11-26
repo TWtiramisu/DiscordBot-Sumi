@@ -1,4 +1,3 @@
-import importlib
 import random
 from typing import Optional
 
@@ -7,23 +6,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import GLOBAL_COGS
-
-# utils hot reload
-import utils.decorators
-importlib.reload(utils.decorators)
 from utils.decorators import hidden
-
-import utils.help
-importlib.reload(utils.help)
 from utils.help import ContentsView, get_help_options
-
-import utils.use
-importlib.reload(utils.use)
-from utils.use import InfosView
-
-import utils.rawtext
-importlib.reload(utils.rawtext)
 from utils.rawtext import EditWhichRaw, RawtextsView, rawtext_insert, rawtext_select
+from utils.use import InfosView
 
 
 class Use(commands.Cog):
