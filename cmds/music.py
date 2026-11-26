@@ -10,7 +10,7 @@ from config import GLOBAL_COGS
 # utils hot reload
 import utils.music
 importlib.reload(utils.music)
-from utils.music import FFMPEG_OPTIONS, ytdl
+from utils.music import FFMPEG_OPTIONS, MusicCardView, NowPlayingView, QueueView, ytdl
 
 
 class Music(commands.Cog):
@@ -29,6 +29,17 @@ class Music(commands.Cog):
         self.play_next_events: dict[int, asyncio.Event] = {}
         self.volumes: dict[int, float] = {}  # 預設 0.5 (50%)
         self.player_locks: dict[int, asyncio.Lock] = {}
+        self.now_playing_messages: dict[int, tuple[discord.Message, NowPlayingView]] = {}
+
+    async def _disable_now_playing_message(self, guild_id: int) -> None:
+        entry = self.now_playing_messages.pop(guild_id, None)
+        if entry:
+            msg, view = entry
+            view.disable_components()
+            try:
+                await msg.edit(view=view)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
 
     def _get_player_lock(self, guild_id: int) -> asyncio.Lock:
         if guild_id not in self.player_locks:
@@ -58,73 +69,109 @@ class Music(commands.Cog):
         if lock.locked():
             return
 
+        finished_normally = False
+
         async with lock:
             self.play_next_events[guild_id] = asyncio.Event()
+            loop = asyncio.get_running_loop()
 
             while ctx.voice_client and ctx.voice_client.is_connected():
                 queue = self.get_queue(guild_id)
 
                 if len(queue) == 0:
                     self.current_songs[guild_id] = None
-                    await ctx.send("📭 佇列中的歌曲已播放完畢。")
+                    finished_normally = True
                     break
 
                 # 取出佇列第一首
                 current_song = queue.pop(0)
                 self.current_songs[guild_id] = current_song
 
-                # 播放前解析真正的音訊 URL
-                loop = asyncio.get_event_loop()
+                # 播放前解析真正的音訊 URL 與建立音訊源
                 try:
                     real_data = await loop.run_in_executor(
-                        None, lambda: ytdl.extract_info(current_song["url"], download=False)
+                        None, lambda url=current_song["url"]: ytdl.extract_info(url, download=False)
                     )
 
-                    if "entries" in real_data and len(real_data["entries"]) > 0:
-                        real_data = real_data["entries"][0]
+                    if not real_data:
+                        raise ValueError("yt-dlp 未回傳任何資訊")
 
-                    real_url = real_data["url"]
+                    if "entries" in real_data and real_data["entries"]:
+                        real_data = next((e for e in real_data["entries"] if e), None)
+                        if not real_data:
+                            raise ValueError("播放項目中沒有有效音訊")
+
+                    real_url = real_data.get("url")
+                    if not real_url:
+                        raise ValueError("無法取得音訊串流網址")
+
                     updated_title = real_data.get("part") or real_data.get("title")
                     if updated_title:
                         current_song["title"] = updated_title
 
-                except Exception:
-                    await ctx.send(f"⚠️ 無法播放 **{current_song['title']}**，已自動跳過。")
+                    # 若在解析期間機器人已斷開連線，直接中止
+                    if not ctx.voice_client or not ctx.voice_client.is_connected():
+                        self.current_songs[guild_id] = None
+                        break
+
+                    # 設定音量控制源
+                    raw_source = discord.FFmpegPCMAudio(real_url, **FFMPEG_OPTIONS)
+                    volume = self.volumes.get(guild_id, 0.5)
+                    source = discord.PCMVolumeTransformer(raw_source, volume=volume)
+
+                    self.play_next_events[guild_id].clear()
+
+                    def after_playing(error):
+                        if error:
+                            print(f"播放出錯: {error}")
+                        ctx.bot.loop.call_soon_threadsafe(self.play_next_events[guild_id].set)
+
+                    ctx.voice_client.play(source, after=after_playing)
+                except Exception as e:
+                    print(f"無法播放 {current_song['title']}: {e}")
+                    self.current_songs[guild_id] = None
+                    await ctx.send(f"無法播放 **{current_song['title']}**，已自動跳過。")
                     continue
 
-                # 設定音量控制源
-                raw_source = discord.FFmpegPCMAudio(real_url, **FFMPEG_OPTIONS)
-                volume = self.volumes.get(guild_id, 0.5)
-                source = discord.PCMVolumeTransformer(raw_source, volume=volume)
-
-                self.play_next_events[guild_id].clear()
-
-                def after_playing(error):
-                    if error:
-                        print(f"播放出錯: {error}")
-                    ctx.bot.loop.call_soon_threadsafe(self.play_next_events[guild_id].set)
-
-                ctx.voice_client.play(source, after=after_playing)
-                duration_str = current_song.get("duration", "未知時長")
-                await ctx.send(
-                    f"🎵 正在播放： `{current_song['title']}` [{duration_str}]  \n-# 當前音量：{int(volume * 100)}%"
+                await self._disable_now_playing_message(guild_id)
+                next_song = queue[0] if queue else None
+                now_playing_view = NowPlayingView(
+                    self,
+                    guild_id,
+                    current_song,
+                    next_song,
+                    volume,
+                    color=self.color,
                 )
+                msg = await ctx.send(view=now_playing_view)
+                self.now_playing_messages[guild_id] = (msg, now_playing_view)
 
                 # 等待當前歌曲結束
                 await self.play_next_events[guild_id].wait()
+                await self._disable_now_playing_message(guild_id)
 
+        # 釋放鎖後再檢查是否有在結束瞬間剛加入的新歌曲，避免競態條件
+        if ctx.voice_client and ctx.voice_client.is_connected():
+            if len(self.get_queue(guild_id)) > 0:
+                if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+                    asyncio.create_task(self.audio_player_task(ctx))
+            elif finished_normally:
+                await ctx.send("佇列中的歌曲已播放完畢。")
+
+    @commands.guild_only()
     @commands.command(name="join", description="讓機器人加入語音頻道")
     async def join(self, ctx: commands.Context):
         if not ctx.author.voice:
-            return await ctx.reply("❌ 你必須先加入一個語音頻道！")
+            return await ctx.reply("你必須先加入一個語音頻道。")
 
         channel = ctx.author.voice.channel
         if ctx.voice_client:
             await ctx.voice_client.move_to(channel)
         else:
             await channel.connect()
-        await ctx.reply(f"📥 已加入： **{channel.name}**")
+        await ctx.reply(f"已加入語音頻道：**{channel.name}**")
 
+    @commands.guild_only()
     @commands.command(name="leave", description="離開語音頻道並清空佇列")
     async def leave(self, ctx: commands.Context):
         guild_id = ctx.guild.id
@@ -135,11 +182,18 @@ class Music(commands.Cog):
             if guild_id in self.current_songs:
                 self.current_songs[guild_id] = None
 
-            await ctx.voice_client.disconnect()
-            await ctx.reply("👋 已離開語音頻道並清空佇列。")
-        else:
-            await ctx.reply("❌ 我目前不在任何語音頻道中。")
+            if ctx.voice_client.is_playing() or ctx.voice_client.is_paused():
+                ctx.voice_client.stop()
+            if guild_id in self.play_next_events:
+                self.play_next_events[guild_id].set()
 
+            await self._disable_now_playing_message(guild_id)
+            await ctx.voice_client.disconnect()
+            await ctx.reply("已離開語音頻道並清空佇列。")
+        else:
+            await ctx.reply("我目前不在任何語音頻道中。")
+
+    @commands.guild_only()
     @commands.command(name="play", usage="<url: YouTube/Bilibili>", description="添加播放佇列")
     async def play(self, ctx: commands.Context, *, url: str):
         guild_id = ctx.guild.id
@@ -148,33 +202,37 @@ class Music(commands.Cog):
             if ctx.author.voice:
                 await ctx.author.voice.channel.connect()
             else:
-                return await ctx.reply("❌ 你必須先加入一個語音頻道！")
+                return await ctx.reply("你必須先加入一個語音頻道。")
 
         async with ctx.typing():
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             try:
                 data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
             except Exception as e:
-                return await ctx.reply(f"❌ 無法讀取該連結或歌曲: {e}")
+                return await ctx.reply(f"無法讀取該連結或歌曲：{e}")
 
             if not data:
-                return await ctx.reply("❌ 找不到任何音樂資訊。")
+                return await ctx.reply("找不到任何音樂資訊。")
 
             queue = self.get_queue(guild_id)
-            added_count = 0
+            entries = list(data["entries"]) if "entries" in data and data["entries"] is not None else None
 
-            # 判斷是否為播放清單 (包含 YouTube Playlist、B站分P、B站合集)
-            is_playlist = "entries" in data and len(data["entries"]) > 1
+            if entries is not None:
+                valid_entries = [entry for entry in entries if entry]
+                if not valid_entries:
+                    return await ctx.reply("找不到任何可播放的音樂資訊。")
 
-            if is_playlist:
-                main_title = data.get("title", "播放清單 / 分P合集")
+                if len(valid_entries) > 1:
+                    main_title = data.get("title", "播放清單 / 分P合集")
+                    added_count = 0
 
-                for entry in data["entries"]:
-                    if entry:
+                    for entry in valid_entries:
                         video_url = entry.get("url") or entry.get("webpage_url")
                         if not video_url and entry.get("id"):
-                            video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+                            video_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                        if not video_url:
+                            continue
 
                         song_title = (
                             entry.get("title")
@@ -183,8 +241,7 @@ class Music(commands.Cog):
                         )
 
                         if not song_title or song_title == "None":
-                            bvid = entry.get("id") or video_url.split("/")[-1]
-                            song_title = f"{bvid}"
+                            song_title = entry.get("id") or video_url.split("/")[-1] or "未知歌曲"
 
                         duration_sec = entry.get("duration")
                         duration_str = self.format_duration(duration_sec)
@@ -197,16 +254,27 @@ class Music(commands.Cog):
                         queue.append(song_item)
                         added_count += 1
 
-                await ctx.reply(f"📚 已成功將播放清單/合集 **{main_title}** (共 {added_count} 首歌曲) 匯入佇列！")
-            else:
-                if "entries" in data and len(data["entries"]) > 0:
-                    data = data["entries"][0]
+                    if added_count == 0:
+                        return await ctx.reply("播放清單中沒有可播放的歌曲。")
 
-                video_url = (
-                    data.get("webpage_url")
-                    or data.get("url")
-                    or f"https://www.youtube.com/watch?v={data.get('id')}"
-                )
+                    await ctx.reply(
+                        view=MusicCardView(
+                            "已匯入播放清單",
+                            f"**{main_title}**\n已加入 `{added_count}` 首歌曲至佇列",
+                            color=self.color,
+                        )
+                    )
+                    data = None
+                else:
+                    data = valid_entries[0]
+
+            if data is not None:
+                video_url = data.get("webpage_url") or data.get("url")
+                if not video_url and data.get("id"):
+                    video_url = f"https://www.youtube.com/watch?v={data['id']}"
+                if not video_url:
+                    return await ctx.reply("無法取得該歌曲的播放網址。")
+
                 song_title = data.get("part") or data.get("title") or "未知歌曲"
                 duration_sec = data.get("duration")
                 duration_str = self.format_duration(duration_sec)
@@ -217,12 +285,19 @@ class Music(commands.Cog):
                     "duration": duration_str,
                 }
                 queue.append(song_item)
-                await ctx.reply(f"⏳ 已加入佇列： **{song_item['title']}** [{duration_str}] \n-# 目前順位: #{len(queue)}")
+                await ctx.reply(
+                    view=MusicCardView(
+                        "已加入佇列",
+                        f"**[{duration_str}]** `{song_item['title']}`\n目前順位：`#{len(queue)}`",
+                        color=self.color,
+                    )
+                )
 
         # 啟動播放任務
         if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused() and not self.current_songs.get(guild_id):
-            self.bot.loop.create_task(self.audio_player_task(ctx))
+            asyncio.create_task(self.audio_player_task(ctx))
 
+    @commands.guild_only()
     @commands.command(name="queue", description="查看目前的歌曲佇列", aliases=["q"])
     async def queue(self, ctx: commands.Context):
         guild_id = ctx.guild.id
@@ -230,79 +305,68 @@ class Music(commands.Cog):
         current = self.current_songs.get(guild_id)
 
         if not current and len(queue) == 0:
-            return await ctx.reply("📭 目前沒有正在播放的歌曲，佇列也是空的。")
+            return await ctx.reply("目前沒有正在播放的歌曲，佇列也是空的。")
 
-        embed = discord.Embed(title="🎵 當前播放清單", color=discord.Color.blue())
+        await ctx.reply(view=QueueView(current, queue, color=self.color))
 
-        if current:
-            current_duration = current.get("duration", "未知時長")
-            embed.add_field(name="▶️ 正在播放", value=f"`{current['title']}` [{current_duration}]", inline=False)
-
-        if len(queue) > 0:
-            queue_list = ""
-            for i, song in enumerate(queue[:10], start=1):
-                song_duration = song.get("duration", "未知時長")
-                queue_list += f"{i}. `{song['title']}` [{song_duration}]\n"
-
-            if len(queue) > 10:
-                queue_list += f"_...以及另外 {len(queue) - 10} 首歌曲_"
-            embed.add_field(name="⏳ 稍後播放", value=queue_list, inline=False)
-        else:
-            embed.add_field(name="⏳ 稍後播放", value="佇列中沒有其他歌曲囉！", inline=False)
-
-        await ctx.reply(embed=embed)
-
+    @commands.guild_only()
     @commands.command(name="pause", description="暫停播放")
     async def pause(self, ctx: commands.Context):
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.pause()
-            await ctx.reply("⏸️ 音樂已暫停。 \n-# 輸入 `\\resume` 恢復播放")
+            prefix = ctx.prefix or ""
+            await ctx.reply(f"音樂已暫停，輸入 `{prefix}resume` 恢復播放。")
         else:
-            await ctx.reply("❌ 目前沒有正在播放的音樂。")
+            await ctx.reply("目前沒有正在播放的音樂。")
 
+    @commands.guild_only()
     @commands.command(name="resume", description="恢復播放")
     async def resume(self, ctx: commands.Context):
         if ctx.voice_client and ctx.voice_client.is_paused():
             ctx.voice_client.resume()
-            await ctx.reply("▶️ 音樂繼續播放。\n-# 輸入 `\\pause` 暫停")
+            prefix = ctx.prefix or ""
+            await ctx.reply(f"音樂繼續播放，輸入 `{prefix}pause` 暫停。")
         else:
-            await ctx.reply("❌ 音樂並未處於暫停狀態。")
+            await ctx.reply("音樂並未處於暫停狀態。")
 
+    @commands.guild_only()
     @commands.command(name="skip", description="跳過當前歌曲")
     async def skip(self, ctx: commands.Context):
         if ctx.voice_client and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
             ctx.voice_client.stop()
-            await ctx.reply("⏭️ 已跳過目前歌曲。")
+            await ctx.reply("已跳過目前歌曲。")
         else:
-            await ctx.reply("❌ 目前沒有歌曲可以跳過。")
+            await ctx.reply("目前沒有歌曲可以跳過。")
 
+    @commands.guild_only()
     @commands.command(name="goto", usage="<佇列位置>", description="跳過到佇列指定位置")
     async def goto(self, ctx: commands.Context, index: int):
         if not ctx.voice_client or (not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused()):
-            return await ctx.reply("❌ 目前沒有音樂正在播放！")
+            return await ctx.reply("目前沒有音樂正在播放。")
 
         guild_id = ctx.guild.id
         queue = self.get_queue(guild_id)
 
         if not queue:
-            return await ctx.reply("❌ 佇列中沒有其他歌曲可跳過！")
+            return await ctx.reply("佇列中沒有其他歌曲可跳過。")
 
         if index < 1 or index > len(queue):
-            return await ctx.reply(f"❌ 無效的位置！請輸入 `1` 到 `{len(queue)}` 之間的號碼。")
+            return await ctx.reply(f"無效的位置，請輸入 `1` 到 `{len(queue)}` 之間的號碼。")
 
         target_song = queue[index - 1]
         del queue[0 : index - 1]
 
         ctx.voice_client.stop()
-        await ctx.reply(f"⏩ 已直接跳至順位 **#{index}**： **{target_song['title']}**！")
+        await ctx.reply(f"已直接跳至順位 **#{index}**：**{target_song['title']}**。")
 
+    @commands.guild_only()
     @commands.command(name="remove", usage="<佇列位置/區間(空格分開)>", description="移除佇列中特定位置或區間的歌曲")
     async def remove(self, ctx: commands.Context, start: int, end: Optional[int] = None):
         guild_id = ctx.guild.id
         queue = self.get_queue(guild_id)
 
         if not queue:
-            return await ctx.reply("❌ 佇列為空，無法刪除！")
+            return await ctx.reply("佇列為空，無法刪除。")
 
         if end is None:
             end = start
@@ -310,32 +374,38 @@ class Music(commands.Cog):
         start_idx, end_idx = min(start, end), max(start, end)
 
         if start_idx < 1 or end_idx > len(queue):
-            return await ctx.reply(f"❌ 無效的範圍！請輸入 `1` 到 `{len(queue)}` 之間的號碼。")
+            return await ctx.reply(f"無效的範圍，請輸入 `1` 到 `{len(queue)}` 之間的號碼。")
 
         removed_items = queue[start_idx - 1 : end_idx]
         del queue[start_idx - 1 : end_idx]
 
         if len(removed_items) == 1:
-            await ctx.reply(f"🗑️ 已從佇列中移除： **{removed_items[0]['title']}**")
+            await ctx.reply(f"已從佇列中移除：**{removed_items[0]['title']}**")
         else:
-            await ctx.reply(f"🗑️ 已從佇列中成功移除 `#{start_idx}` 到 `#{end_idx}` 共 `{len(removed_items)}首歌`！")
+            await ctx.reply(f"已從佇列中移除 `#{start_idx}` 到 `#{end_idx}`，共 `{len(removed_items)}` 首歌曲。")
 
-    @commands.command(name="volume", usage="<音量>", description="調整音量 (0-100)", aliases=["vol"])
-    async def volume(self, ctx: commands.Context, vol: int):
+    @commands.guild_only()
+    @commands.command(name="volume", usage="[音量]", description="調整或查看音量 (0-100)", aliases=["vol"])
+    async def volume(self, ctx: commands.Context, vol: Optional[int] = None):
+        guild_id = ctx.guild.id
+
+        if vol is None:
+            current_vol = int(self.volumes.get(guild_id, 0.5) * 100)
+            return await ctx.reply(f"目前音量為 `{current_vol}%`。")
+
         if not ctx.voice_client:
-            return await ctx.reply("❌ 我不在語音頻道。")
+            return await ctx.reply("我目前不在任何語音頻道中。")
 
         if vol < 0 or vol > 100:
-            return await ctx.reply("❌ 音量範圍必須在 0 到 100 之間！")
+            return await ctx.reply("音量範圍必須在 `0` 到 `100` 之間。")
 
-        guild_id = ctx.guild.id
         transformed_volume = vol / 100
         self.volumes[guild_id] = transformed_volume
 
         if ctx.voice_client.source:
             ctx.voice_client.source.volume = transformed_volume
 
-        await ctx.reply(f"🔊 音量已調整為： `{vol}%`")
+        await ctx.reply(f"音量已調整為 `{vol}%`。")
 
 
 async def setup(bot: commands.Bot):
